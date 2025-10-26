@@ -126,12 +126,19 @@ def _capture_region(selection: Selection) -> Optional["np.ndarray"]:  # type: ig
             "height": int(round(selection.height)),
         }
         grab = sct.grab(monitor)
-        image = np.array(grab)
+        image = np.array(grab, dtype=np.uint8)
     if cv2 is None:
         raise RuntimeError("opencv-python is required to encode screenshots")
-    # Drop alpha channel if present
-    if image.shape[2] == 4:
-        image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+    if image.ndim == 2:
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+    elif image.ndim == 3:
+        channels = image.shape[2]
+        if channels == 4:
+            image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+        elif channels == 1:
+            image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+    else:  # pragma: no cover - defensive guard for unexpected inputs
+        raise RuntimeError("Unsupported screenshot format returned by mss")
     return image
 
 

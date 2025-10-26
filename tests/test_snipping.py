@@ -8,12 +8,18 @@ from app import snipping
 
 
 class _DummyGrab:
-    shape = (2, 2, 4)
+    def __init__(self, shape: tuple[int, ...]):
+        self.shape = shape
+
+    @property
+    def ndim(self) -> int:
+        return len(self.shape)
 
 
 class _RecordingMSS:
-    def __init__(self) -> None:
+    def __init__(self, channels: int | None = 4) -> None:
         self.last_monitor = None
+        self._channels = channels
 
     def __enter__(self) -> "_RecordingMSS":
         return self
@@ -23,7 +29,11 @@ class _RecordingMSS:
 
     def grab(self, monitor: dict[str, int]) -> _DummyGrab:
         self.last_monitor = monitor
-        return _DummyGrab()
+        height = monitor["height"]
+        width = monitor["width"]
+        if self._channels is None:
+            return _DummyGrab((height, width))
+        return _DummyGrab((height, width, self._channels))
 
 
 @pytest.fixture(autouse=True)
@@ -44,7 +54,14 @@ def _restore_modules(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_capture_region_rounds_coordinates(monkeypatch: pytest.MonkeyPatch) -> None:
     recorder = _RecordingMSS()
     monkeypatch.setattr(snipping, "mss", types.SimpleNamespace(mss=lambda: recorder))
-    monkeypatch.setattr(snipping, "np", types.SimpleNamespace(array=lambda grab: _DummyGrab()))
+    monkeypatch.setattr(
+        snipping,
+        "np",
+        types.SimpleNamespace(
+            array=lambda *args, **kwargs: _DummyGrab((2, 2, 4)),
+            uint8="uint8",
+        ),
+    )
     monkeypatch.setattr(
         snipping,
         "cv2",
@@ -55,6 +72,43 @@ def test_capture_region_rounds_coordinates(monkeypatch: pytest.MonkeyPatch) -> N
     snipping._capture_region(selection)
 
     assert recorder.last_monitor == {"left": 1, "top": 4, "width": 50, "height": 11}
+
+
+def test_capture_region_upgrades_grayscale(monkeypatch: pytest.MonkeyPatch) -> None:
+    recorder = _RecordingMSS()
+    monkeypatch.setattr(snipping, "mss", types.SimpleNamespace(mss=lambda: recorder))
+
+    monkeypatch.setattr(
+        snipping,
+        "np",
+        types.SimpleNamespace(
+            array=lambda *args, **kwargs: _DummyGrab((10, 10)),
+            uint8="uint8",
+        ),
+    )
+
+    converted = {}
+
+    def _convert(image: _DummyGrab, code: int) -> str:  # type: ignore[override]
+        converted["image"] = image
+        converted["code"] = code
+        return "converted"
+
+    monkeypatch.setattr(
+        snipping,
+        "cv2",
+        types.SimpleNamespace(
+            COLOR_BGRA2BGR=1,
+            COLOR_GRAY2BGR=2,
+            cvtColor=_convert,
+        ),
+    )
+
+    selection = snipping.Selection(left=0, top=0, width=10, height=10)
+    result = snipping._capture_region(selection)
+
+    assert result == "converted"
+    assert converted["code"] == 2
 
 
 def test_run_snipping_ocr_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
