@@ -67,6 +67,8 @@ Ingin hasil OCR dari bagian layar apa pun seperti alat snipping bawaan OS? Ikuti
 
 ```bash
 pip install mss pyperclip  # jika belum ada
+# CPU build PaddlePaddle (wajib untuk OCR asli)
+pip install paddlepaddle -f https://www.paddlepaddle.org.cn/whl/simple
 python -m app.cli snip
 ```
 
@@ -119,6 +121,10 @@ Ikuti detail berikut bila Anda benar-benar mulai dari nol:
    pip install --upgrade pip
    pip install -r requirements.txt
    pip install mss pyperclip
+   # wajib: PaddleOCR membutuhkan paket paddlepaddle inti
+   pip install paddlepaddle -f https://www.paddlepaddle.org.cn/whl/simple
+   # alternatif resmi (CPU):
+   python -m pip install paddlepaddle==3.2.0 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
    ```
 
    Tips pemula:
@@ -141,6 +147,8 @@ Ikuti detail berikut bila Anda benar-benar mulai dari nol:
    2. Klik–drag area teks yang ingin dipanen.
    3. Lepas mouse → pipeline preprocessing + PaddleOCR berjalan di CPU.
    4. Jendela hasil muncul menampilkan teks; isi clipboard langsung diperbarui.
+
+   > **Tip:** Jika Anda lupa memasang `paddlepaddle`, aplikasi tetap jalan namun memakai *dummy engine* sebagai placeholder dan akan menampilkan teks contoh beserta log peringatan. Pasang paket tersebut lalu jalankan ulang agar hasil OCR nyata keluar.
 
 6. **Tes clipboard Anda.** Buka aplikasi teks ringan, misalnya *Mousepad* (`mousepad &`). Tekan `Ctrl+V`. Jika teks muncul, workflow selesai. Bila clipboard kosong:
 

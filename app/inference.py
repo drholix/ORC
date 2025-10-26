@@ -39,6 +39,7 @@ class EngineOutput:
     duration_ms: float
     raw: Any
     language: str
+    device: str
 
 
 class BaseOCREngine(Protocol):
@@ -72,6 +73,7 @@ class DummyOCREngine:
             duration_ms=(time.perf_counter() - start) * 1000,
             raw=None,
             language=languages[0] if languages else "en",
+            device="cpu",
         )
 
     def _dims(self, image: Any) -> tuple[int, int]:
@@ -95,10 +97,12 @@ class PaddleOCREngine:
 
         use_gpu = config.enable_gpu and bool(os.environ.get("PADDLEOCR_USE_GPU", "1") == "1")
         lang = self._resolve_language(config.languages)
+        device_choice = "gpu" if use_gpu else "cpu"
         ocr_kwargs: Dict[str, Any] = {
             "use_angle_cls": True,
             "lang": lang,
             "use_gpu": use_gpu,
+            "device": device_choice,
             "show_log": False,
         }
         if config.ocr_version:
@@ -144,8 +148,9 @@ class PaddleOCREngine:
                 if key not in supported_params:
                     LOGGER.debug("drop_unsupported_param", param=key)
                     ocr_kwargs.pop(key, None)
+        self.device = "gpu" if use_gpu else "cpu"
         self._ocr_kwargs = ocr_kwargs
-        self.ocr = self._engine_factory(**self._ocr_kwargs)  # type: ignore[call-arg]
+        self.ocr = self._create_engine_instance()
         self.config = config
         self.logger = LOGGER.bind(
             engine="paddle",
@@ -165,7 +170,7 @@ class PaddleOCREngine:
             )
             self.lang = requested_lang
             self._ocr_kwargs["lang"] = requested_lang
-            self.ocr = self._engine_factory(**self._ocr_kwargs)  # type: ignore[call-arg]
+            self.ocr = self._create_engine_instance()
         if np is not None and not isinstance(image, np.ndarray):  # type: ignore[arg-type]
             image = np.asarray(image)  # type: ignore[assignment]
         start = time.perf_counter()
@@ -198,6 +203,7 @@ class PaddleOCREngine:
             duration_ms=duration_ms,
             raw=results,
             language=self.lang,
+            device=self.device,
         )
 
     @staticmethod
@@ -237,6 +243,55 @@ class PaddleOCREngine:
                 flat.append(float(point))
         return flat
 
+    def _create_engine_instance(self):  # type: ignore[no-untyped-def]
+        attempts = 0
+        while True:
+            try:
+                return self._engine_factory(**self._ocr_kwargs)  # type: ignore[call-arg]
+            except ModuleNotFoundError as exc:  # pragma: no cover - heavy optional dependency
+                if exc.name == "paddle":
+                    raise RuntimeError(
+                        "PaddleOCR requires the `paddlepaddle` package. Install the CPU build with"
+                        " `pip install paddlepaddle` (or the GPU build with `pip install"
+                        " paddlepaddle-gpu`)."
+                    ) from exc
+                raise
+            except ValueError as exc:
+                unknown = self._extract_unknown_argument(str(exc))
+                if unknown and unknown in self._ocr_kwargs and attempts < 5:
+                    LOGGER.debug("drop_unknown_param", param=unknown)
+                    self._ocr_kwargs.pop(unknown, None)
+                    attempts += 1
+                    continue
+                raise RuntimeError(f"Failed to initialize PaddleOCR: {exc}") from exc
+            except TypeError as exc:
+                unknown = self._extract_unknown_argument(str(exc))
+                if unknown and unknown in self._ocr_kwargs and attempts < 5:
+                    LOGGER.debug("drop_unknown_param", param=unknown)
+                    self._ocr_kwargs.pop(unknown, None)
+                    attempts += 1
+                    continue
+                raise RuntimeError(f"Failed to initialize PaddleOCR: {exc}") from exc
+            except Exception as exc:  # pragma: no cover - runtime safeguard
+                raise RuntimeError(f"Failed to initialize PaddleOCR: {exc}") from exc
+
+    @staticmethod
+    def _extract_unknown_argument(message: str) -> str | None:
+        marker = "Unknown argument"
+        if marker not in message:
+            return None
+        # Handle messages like "Unknown argument: use_gpu" or TypeError variants.
+        tail = message.split(marker, 1)[1]
+        if ":" in tail:
+            candidate = tail.split(":", 1)[1]
+        else:
+            candidate = tail
+        candidate = candidate.strip()
+        for delimiter in (" ", "\n", ".", ","):
+            if delimiter in candidate:
+                candidate = candidate.split(delimiter, 1)[0]
+        return candidate.strip("'\" ") or None
+
 
 def create_engine(config: OCRConfig, force_dummy: bool = False) -> BaseOCREngine:
     """Factory that returns a configured OCR engine."""
@@ -247,5 +302,9 @@ def create_engine(config: OCRConfig, force_dummy: bool = False) -> BaseOCREngine
     if engine_choice in {"dummy", "fake"}:
         return DummyOCREngine()
     if engine_choice in {"paddle", "paddleocr", "ppocr"}:
-        return PaddleOCREngine(config)
+        try:
+            return PaddleOCREngine(config)
+        except RuntimeError as exc:
+            LOGGER.warning("paddle_engine_unavailable", error=str(exc))
+            return DummyOCREngine()
     raise ValueError(f"Unsupported OCR engine '{config.engine}'")

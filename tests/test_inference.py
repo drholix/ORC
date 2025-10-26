@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.config import OCRConfig
-from app.inference import PaddleOCREngine
+from app.inference import DummyOCREngine, PaddleOCREngine, create_engine
 
 
 @pytest.fixture(autouse=True)
@@ -67,7 +67,7 @@ def test_paddle_engine_handles_device_param(monkeypatch):
     captured_kwargs: dict[str, object] = {}
 
     class FakePaddleOCR:
-        def __init__(self, *, use_angle_cls: bool, lang: str, device: str) -> None:
+        def __init__(self, *, use_angle_cls: bool, lang: str, device: str, **kwargs) -> None:
             captured_kwargs.update(
                 {
                     "use_angle_cls": use_angle_cls,
@@ -75,6 +75,7 @@ def test_paddle_engine_handles_device_param(monkeypatch):
                     "device": device,
                 }
             )
+            captured_kwargs.update(kwargs)
 
         def ocr(self, image, cls=True):  # pragma: no cover - not exercised
             return []
@@ -86,3 +87,52 @@ def test_paddle_engine_handles_device_param(monkeypatch):
 
     assert captured_kwargs["device"] == "gpu"
     assert "use_gpu" not in captured_kwargs
+
+
+def test_paddle_engine_drops_unknown_kwargs_and_retries(monkeypatch):
+    """ValueErrors that mention unknown args should trigger a retry without them."""
+
+    calls: list[dict[str, object]] = []
+
+    class FakePaddleOCR:
+        def __init__(
+            self,
+            *,
+            use_angle_cls: bool,
+            lang: str,
+            use_gpu: bool | None = None,
+            **kwargs,
+        ) -> None:
+            calls.append({
+                "use_angle_cls": use_angle_cls,
+                "lang": lang,
+                "use_gpu": use_gpu,
+                **kwargs,
+            })
+            if len(calls) == 1:
+                raise ValueError("Unknown argument: use_gpu")
+
+        def ocr(self, image, cls=True):  # pragma: no cover - not exercised
+            return []
+
+    sys.modules["paddleocr"] = SimpleNamespace(PaddleOCR=FakePaddleOCR)
+
+    config = OCRConfig()
+    engine = PaddleOCREngine(config)
+
+    assert len(calls) == 2  # first attempt fails, second succeeds
+    assert "use_gpu" not in engine._ocr_kwargs
+
+
+def test_create_engine_falls_back_to_dummy(monkeypatch):
+    """If Paddle initialization fails at runtime we fall back to the dummy engine."""
+
+    def boom(self, config):  # pragma: no cover - invoked via create_engine
+        raise RuntimeError("paddle missing")
+
+    monkeypatch.setenv("OCR_FAKE_ENGINE", "0")
+    monkeypatch.setattr("app.inference.PaddleOCREngine.__init__", boom, raising=False)
+
+    engine = create_engine(OCRConfig())
+
+    assert isinstance(engine, DummyOCREngine)

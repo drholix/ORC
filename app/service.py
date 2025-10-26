@@ -21,7 +21,7 @@ import structlog
 
 from .cache import OCRCache
 from .config import OCRConfig, load_config
-from .inference import create_engine
+from .inference import DummyOCREngine, create_engine
 from .pdf import extract_pdf
 from .postprocess import PostProcessor
 from .preprocess import Preprocessor, load_image, load_image_from_bytes
@@ -61,6 +61,11 @@ class OCRService:
         self.preprocessor = Preprocessor(self.config)
         self.postprocessor = PostProcessor(self.config)
         self.engine = create_engine(self.config)
+        if isinstance(self.engine, DummyOCREngine):
+            self.logger.warning(
+                "engine_fallback_dummy",
+                message="PaddleOCR unavailable, using dummy OCR engine. Install paddlepaddle for real OCR output.",
+            )
         self.ratelimiter = RateLimiter(self.config.rate_limit)
 
     def _download(self, url: str) -> bytes:
@@ -134,12 +139,18 @@ class OCRService:
                 {"bbox": bbox, "cells": len(tables.cells)} for bbox in tables.bounding_boxes
             ]
 
+        engine_name = (
+            self.engine.__class__.__name__.replace("OCREngine", "").lower()
+            if hasattr(self.engine, "__class__")
+            else str(self.engine)
+        )
+
         meta.update(
             {
                 "duration_ms": duration_ms,
-                "device": "gpu" if self.config.enable_gpu else "cpu",
+                "device": engine_output.device,
                 "engine": {
-                    "name": self.config.engine,
+                    "name": engine_name,
                     "ocr_version": self.config.ocr_version,
                     "language": engine_output.language,
                 },
