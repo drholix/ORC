@@ -116,6 +116,11 @@ class OCRService:
 
         cached = self.cache.get(key)
         if cached:
+            self.logger.info(
+                "cache_hit",
+                source=meta.get("source") or meta.get("path", "bytes"),
+                image_size=meta.get("image_size"),
+            )
             return OCRResponse(
                 text=cached["text"],
                 language=cached.get("language", "mix"),
@@ -124,8 +129,21 @@ class OCRService:
             )
 
         start = time.perf_counter()
+        self.logger.info(
+            "process_start",
+            source=meta.get("source") or meta.get("path", "bytes"),
+            image_size=meta.get("image_size"),
+        )
         preprocess_result = self.preprocessor.run(image)
         engine_output = self.engine.infer(preprocess_result.image, self.config.languages)
+        if not engine_output.text.strip():
+            self.logger.warning(
+                "engine_returned_empty_text",
+                duration_ms=engine_output.duration_ms,
+                device=engine_output.device,
+                language=engine_output.language,
+                blocks=len(engine_output.blocks),
+            )
         post_result = self.postprocessor.run({
             "text": engine_output.text,
             "blocks": engine_output.blocks,
@@ -174,6 +192,12 @@ class OCRService:
             "meta": meta,
         }
         self.cache.set(key, result)
+        self.logger.info(
+            "process_complete",
+            duration_ms=duration_ms,
+            text_chars=len(post_result.text),
+            blocks=len(post_result.blocks),
+        )
         return OCRResponse(**result)
 
     def process_batch(self, sources: Sequence[Union[str, Path]]) -> List[OCRResponse]:

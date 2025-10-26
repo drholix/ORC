@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import sys
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -32,10 +33,14 @@ try:  # pragma: no cover - optional dependency
 except ImportError:  # pragma: no cover
     pyperclip = None  # type: ignore
 
+import structlog
+
 from .config import OCRConfig, load_config
 from .image_utils import ensure_bgr_image
 from .inference import DummyOCREngine
 from .service import OCRService
+
+LOGGER = structlog.get_logger(__name__)
 
 
 @dataclass
@@ -211,34 +216,50 @@ def run_snipping_ocr(config: Optional[OCRConfig] = None) -> Optional[str]:
     if np is None or cv2 is None:
         raise RuntimeError("numpy and opencv-python are required for snipping OCR")
 
+    logger = LOGGER.bind(workflow="snip")
+    start_time = time.perf_counter()
+
     if config is not None:
         resolved_config = dataclasses.replace(config)
     else:
         resolved_config = load_config()
+    logger.info(
+        "startup",
+        enable_gpu=resolved_config.enable_gpu,
+        languages=resolved_config.languages,
+        min_confidence=resolved_config.min_confidence,
+    )
     if resolved_config.enable_gpu and not _gpu_available():
-        print("GPU not detected. Falling back to CPU for snipping OCR.")
+        logger.warning("gpu_missing", message="GPU not detected; using CPU")
         resolved_config.enable_gpu = False
     service = OCRService(resolved_config)
     engine = getattr(service, "engine", None)
     if isinstance(engine, DummyOCREngine):
-        print(
-            "Warning: PaddleOCR dependencies are missing. The snipping tool "
-            "will return placeholder text until paddlepaddle and paddleocr "
-            "are installed."
+        logger.warning(
+            "engine_dummy",
+            message=(
+                "Using Dummy OCR engine. Install paddlepaddle and paddleocr for real results."
+            ),
         )
 
     selector = RegionSelector()
     selection = selector.select()
     if selection is None or not selection.is_valid:
-        print("Selection cancelled.")
+        logger.info("selection_cancelled")
         return None
 
     image = _capture_region(selection)
     if image is None:
-        print("Selection was too small to capture.")
+        logger.warning("capture_failed", selection=dataclasses.asdict(selection))
         return None
+    logger.info(
+        "selection_captured",
+        selection=dataclasses.asdict(selection),
+        shape=getattr(image, "shape", None),
+    )
 
     payload = _encode_image(image)
+    logger.debug("dispatching_to_service", payload_size=len(payload))
     response = service.process_image(payload)
     text = response.text.strip()
     _copy_to_clipboard(text)
@@ -247,7 +268,16 @@ def run_snipping_ocr(config: Optional[OCRConfig] = None) -> Optional[str]:
         duration = float(duration_ms)
     else:
         duration = None
+    logger.info(
+        "ocr_complete",
+        duration_ms=duration,
+        text_preview=text[:80],
+        text_length=len(text),
+        device=response.meta.get("device") if response.meta else None,
+    )
     _show_popup(text, duration)
+    total_ms = (time.perf_counter() - start_time) * 1000
+    logger.info("workflow_complete", total_duration_ms=total_ms)
     return text or None
 
 
