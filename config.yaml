@@ -8,6 +8,7 @@
   "rec_model_dir": null,
   "cls_model_dir": null,
   "structure_version": null,
+  "use_angle_cls": true,
   "text_det_limit_side_len": 1080,
   "text_det_limit_type": "max",
   "text_det_unclip_ratio": 1.5,

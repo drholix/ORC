@@ -99,13 +99,26 @@ class PaddleOCREngine:
         use_gpu = config.enable_gpu and bool(os.environ.get("PADDLEOCR_USE_GPU", "1") == "1")
         lang = self._resolve_language(config.languages)
         device_choice = "gpu" if use_gpu else "cpu"
+
+        textline_enabled = bool(config.use_textline_orientation)
+        angle_cls_flag = config.use_angle_cls
+        if angle_cls_flag is None:
+            angle_cls_flag = not textline_enabled
+        if textline_enabled and angle_cls_flag:
+            LOGGER.warning(
+                "angle_cls_textline_conflict",
+                message="Disabling angle classifier because textline orientation is enabled.",
+            )
+            angle_cls_flag = False
+
         ocr_kwargs: Dict[str, Any] = {
-            "use_angle_cls": True,
             "lang": lang,
             "use_gpu": use_gpu,
             "device": device_choice,
             "show_log": False,
         }
+        if angle_cls_flag is not None:
+            ocr_kwargs["use_angle_cls"] = bool(angle_cls_flag)
         if config.ocr_version:
             ocr_kwargs["ocr_version"] = config.ocr_version
         if config.det_model_dir:
@@ -179,6 +192,7 @@ class PaddleOCREngine:
                     ocr_kwargs.pop(key, None)
         self.device = "gpu" if use_gpu else "cpu"
         self._ocr_kwargs = ocr_kwargs
+        self._sync_feature_flags()
         self._runtime_call_kwargs: Dict[str, Any] = {}
         self._gpu_retry_done = False
         self.ocr = self._create_engine_instance()
@@ -189,6 +203,8 @@ class PaddleOCREngine:
             gpu=use_gpu,
             lang=lang,
             ocr_version=config.ocr_version,
+            angle_cls=self.angle_cls_enabled,
+            textline_orientation=self.textline_orientation_enabled,
         )
         self.lang = lang
 
@@ -259,12 +275,21 @@ class PaddleOCREngine:
         if not languages:
             return "en"
         normalized = [lang.lower().strip() for lang in languages if lang]
+        if not normalized:
+            return "en"
+        auto_tokens = {"auto", "detect", "auto-detect", "auto_detect"}
+        if any(candidate in auto_tokens for candidate in normalized):
+            return "latin"
+        if len(set(normalized)) > 1:
+            return "latin"
+        candidate = normalized[0]
         mapping = {
             "en": "en",
             "english": "en",
             "id": "latin",
             "indonesian": "latin",
             "latin": "latin",
+            "mix": "latin",
             "multi": "multilingual",
             "multilingual": "multilingual",
             "ar": "arabic",
@@ -272,14 +297,7 @@ class PaddleOCREngine:
             "ru": "cyrillic",
             "russian": "cyrillic",
         }
-        for candidate in normalized:
-            if candidate in mapping and candidate not in {"id", "indonesian"}:
-                return mapping[candidate]
-        if len(normalized) == 1 and normalized[0] in mapping:
-            return mapping[normalized[0]]
-        if len(normalized) > 1:
-            return "latin"
-        return mapping.get(normalized[0], normalized[0])
+        return mapping.get(candidate, candidate)
 
     @staticmethod
     def _flatten_bbox(bbox: Iterable[Iterable[float]]) -> List[float]:
@@ -309,6 +327,13 @@ class PaddleOCREngine:
                 if unknown and unknown in self._ocr_kwargs and attempts < 5:
                     LOGGER.debug("drop_unknown_param", param=unknown)
                     self._ocr_kwargs.pop(unknown, None)
+                    self._sync_feature_flags()
+                    attempts += 1
+                    continue
+                if (
+                    self._handle_mutually_exclusive_error(str(exc))
+                    and attempts < 5
+                ):
                     attempts += 1
                     continue
                 if self._maybe_retry_without_gpu(exc):
@@ -320,6 +345,13 @@ class PaddleOCREngine:
                 if unknown and unknown in self._ocr_kwargs and attempts < 5:
                     LOGGER.debug("drop_unknown_param", param=unknown)
                     self._ocr_kwargs.pop(unknown, None)
+                    self._sync_feature_flags()
+                    attempts += 1
+                    continue
+                if (
+                    self._handle_mutually_exclusive_error(str(exc))
+                    and attempts < 5
+                ):
                     attempts += 1
                     continue
                 if self._maybe_retry_without_gpu(exc):
@@ -352,6 +384,30 @@ class PaddleOCREngine:
             if delimiter in candidate:
                 candidate = candidate.split(delimiter, 1)[0]
         return candidate.strip("'\" ") or None
+
+    def _handle_mutually_exclusive_error(self, message: str) -> bool:
+        lowered = message.lower()
+        if "mutually exclusive" not in lowered:
+            return False
+        if self._ocr_kwargs.get("use_textline_orientation"):
+            LOGGER.warning("paddle_disable_textline_orientation", error=message)
+            self._ocr_kwargs["use_textline_orientation"] = False
+            if "use_angle_cls" not in self._ocr_kwargs:
+                self._ocr_kwargs["use_angle_cls"] = True
+            self._sync_feature_flags()
+            return True
+        if self._ocr_kwargs.get("use_angle_cls"):
+            LOGGER.warning("paddle_disable_angle_cls", error=message)
+            self._ocr_kwargs["use_angle_cls"] = False
+            self._sync_feature_flags()
+            return True
+        return False
+
+    def _sync_feature_flags(self) -> None:
+        self.angle_cls_enabled = bool(self._ocr_kwargs.get("use_angle_cls", False))
+        self.textline_orientation_enabled = bool(
+            self._ocr_kwargs.get("use_textline_orientation", False)
+        )
 
     def _refresh_runtime_call_kwargs(self) -> None:
         """Determine runtime kwargs (like ``cls``) supported by the engine."""

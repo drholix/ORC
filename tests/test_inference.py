@@ -207,6 +207,31 @@ def test_paddle_engine_runtime_handles_missing_cls_parameter(monkeypatch):
     assert result.text == "text"
 
 
+def test_paddle_engine_disables_angle_cls_when_textline_enabled(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakePaddleOCR:
+        def __init__(self, **kwargs) -> None:  # pragma: no cover - init only
+            captured.update(kwargs)
+
+        def ocr(self, image, **kwargs):
+            return [[[([0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]), ("text", 0.95)]]]
+
+    sys.modules["paddleocr"] = SimpleNamespace(PaddleOCR=FakePaddleOCR)
+
+    engine = PaddleOCREngine(OCRConfig(use_textline_orientation=True))
+
+    assert captured.get("use_textline_orientation") is True
+    assert captured.get("use_angle_cls") is False
+    assert engine.textline_orientation_enabled is True
+    assert engine.angle_cls_enabled is False
+
+
+def test_resolve_language_auto_defaults_to_latin() -> None:
+    assert PaddleOCREngine._resolve_language(["auto"]) == "latin"
+    assert PaddleOCREngine._resolve_language(["id", "en"]) == "latin"
+
+
 def test_paddle_engine_falls_back_to_cpu_when_gpu_fails(monkeypatch):
     """GPU initialization errors should trigger a CPU retry."""
 

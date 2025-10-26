@@ -15,3 +15,4 @@ python-multipart>=0.0.6
 mss>=9.0.1
 pyperclip>=1.8
 pytest>=7.4
+langdetect>=1.0.9

@@ -10,6 +10,13 @@ import structlog
 
 from .config import OCRConfig
 
+try:  # pragma: no cover - optional dependency for richer detection
+    from langdetect import DetectorFactory, detect_langs  # type: ignore
+
+    DetectorFactory.seed = 0  # ensure deterministic predictions across runs
+except Exception:  # pragma: no cover - dependency not available
+    detect_langs = None  # type: ignore
+
 LOGGER = structlog.get_logger(__name__)
 
 DATE_REGEX = re.compile(r"(\d{1,2})[\-/](\d{1,2})[\-/](\d{2,4})")
@@ -54,15 +61,67 @@ class SpellCorrector:
 
 
 class LanguageDetector:
-    """Minimal language detector based on character heuristics."""
+    """Best-effort language detector with langdetect fallback."""
+
+    def __init__(self) -> None:
+        self._langdetect = detect_langs
 
     def detect(self, text: str, default: str = "mix") -> str:
         if not text:
             return default
-        text_lower = text.lower()
-        id_score = sum(text_lower.count(ch) for ch in "khsyai")
-        en_score = sum(text_lower.count(ch) for ch in "thear")
-        if abs(id_score - en_score) < 3:
+        stripped = text.strip()
+        if not stripped:
+            return default
+
+        if self._langdetect is not None:
+            try:
+                predictions = self._langdetect(stripped)
+            except Exception:
+                predictions = []
+            else:
+                mapped: List[tuple[str, float]] = [
+                    (self._map_code(candidate.lang), candidate.prob)
+                    for candidate in predictions
+                ]
+                mapped = [(code, prob) for code, prob in mapped if code]
+                if mapped:
+                    strong = {code for code, prob in mapped if prob >= 0.25}
+                    if len(strong) > 1:
+                        return "mix"
+                    top_code, top_prob = mapped[0]
+                    if top_prob >= 0.4:
+                        return top_code
+                    return default
+
+        return self._heuristic(stripped.lower(), default)
+
+    @staticmethod
+    def _map_code(code: str) -> Optional[str]:
+        mapping = {
+            "en": "en",
+            "eng": "en",
+            "id": "id",
+            "ind": "id",
+            "ms": "id",
+            "msa": "id",
+            "jv": "id",
+            "jw": "id",
+        }
+        return mapping.get(code)
+
+    @staticmethod
+    def _heuristic(text_lower: str, default: str) -> str:
+        if not text_lower:
+            return default
+        id_tokens = [" yang ", " tidak ", " kamu ", " saya ", " untuk ", " dengan "]
+        en_tokens = [" the ", " and ", " with ", " from ", " this ", " that "]
+        id_score = 5 * sum(text_lower.count(token) for token in id_tokens)
+        en_score = 5 * sum(text_lower.count(token) for token in en_tokens)
+        id_score += sum(text_lower.count(ch) for ch in "khsyaiu")
+        en_score += sum(text_lower.count(ch) for ch in "thearoin")
+        if id_score == 0 and en_score == 0:
+            return default
+        if abs(id_score - en_score) <= 2:
             return "mix"
         return "id" if id_score > en_score else "en"
 
