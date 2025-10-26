@@ -26,6 +26,15 @@ class OCRConfig:
     rec_model_dir: Optional[str] = None
     cls_model_dir: Optional[str] = None
     structure_version: Optional[str] = None
+    det_limit_side_len: Optional[int] = 1080
+    det_limit_type: Optional[str] = "max"
+    det_db_unclip_ratio: Optional[float] = 1.5
+    det_db_box_thresh: Optional[float] = 0.5
+    det_db_thresh: Optional[float] = 0.2
+    rec_score_thresh: Optional[float] = 0.5
+    use_doc_orientation_classify: Optional[bool] = False
+    use_doc_unwarping: Optional[bool] = False
+    use_textline_orientation: Optional[bool] = False
     max_image_size: int = 2048
     table_mode: bool = False
     handwriting_mode: bool = False

@@ -45,6 +45,7 @@ def test_paddle_engine_drops_unsupported_show_log(monkeypatch):
             rec_model_dir: str | None = None,
             cls_model_dir: str | None = None,
             structure_version: str | None = None,
+            **kwargs,
         ) -> None:
             self.init_kwargs = {
                 "use_angle_cls": use_angle_cls,
@@ -55,6 +56,7 @@ def test_paddle_engine_drops_unsupported_show_log(monkeypatch):
                 "rec_model_dir": rec_model_dir,
                 "cls_model_dir": cls_model_dir,
                 "structure_version": structure_version,
+                **kwargs,
             }
 
         def ocr(self, image, cls=True):  # pragma: no cover - not exercised
@@ -297,3 +299,51 @@ def test_paddle_engine_handles_dict_entries(monkeypatch):
 
     assert result.text == "dict"
     assert result.blocks[0]["confidence"] == pytest.approx(0.92)
+
+
+def test_paddle_engine_applies_detection_overrides(monkeypatch):
+    """Detection thresholds should propagate to the PaddleOCR constructor."""
+
+    captured_kwargs: dict[str, object] = {}
+
+    class FakePaddleOCR:
+        def __init__(self, **kwargs) -> None:  # pragma: no cover - init only
+            captured_kwargs.update(kwargs)
+
+        def ocr(self, image, **kwargs):
+            return [
+                [
+                    (
+                        [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                        ("override", 0.9),
+                    )
+                ]
+            ]
+
+    sys.modules["paddleocr"] = SimpleNamespace(PaddleOCR=FakePaddleOCR)
+
+    config = OCRConfig(
+        det_limit_side_len=720,
+        det_limit_type="min",
+        det_db_unclip_ratio=2.1,
+        det_db_box_thresh=0.45,
+        det_db_thresh=0.15,
+        rec_score_thresh=0.4,
+        use_doc_orientation_classify=False,
+        use_doc_unwarping=False,
+        use_textline_orientation=False,
+    )
+
+    engine = PaddleOCREngine(config)
+    result = engine.infer([[0, 0], [0, 0]], ["en"])
+
+    assert result.text == "override"
+    assert captured_kwargs["det_limit_side_len"] == 720
+    assert captured_kwargs["det_limit_type"] == "min"
+    assert captured_kwargs["det_db_unclip_ratio"] == 2.1
+    assert captured_kwargs["det_db_box_thresh"] == 0.45
+    assert captured_kwargs["det_db_thresh"] == 0.15
+    assert captured_kwargs["rec_score_thresh"] == 0.4
+    assert captured_kwargs["use_doc_orientation_classify"] is False
+    assert captured_kwargs["use_doc_unwarping"] is False
+    assert captured_kwargs["use_textline_orientation"] is False

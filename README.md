@@ -78,6 +78,23 @@ Langkah-langkahnya:
 2. Lepas mouse → proses OCR berlangsung offline menggunakan PaddleOCR CPU.
 3. Hasil teks tampil di jendela kecil dan otomatis masuk ke clipboard.
 
+> **Tangkapan layar kecil tidak terdeteksi?**
+> Mulai versi ini `config.yaml` menyalakan tweak deteksi berikut secara default:
+>
+> ```yaml
+> det_limit_side_len: 1080
+> det_limit_type: "max"
+> det_db_unclip_ratio: 1.5
+> det_db_box_thresh: 0.5
+> det_db_thresh: 0.2
+> rec_score_thresh: 0.5
+> use_doc_orientation_classify: false
+> use_doc_unwarping: false
+> use_textline_orientation: false
+> ```
+>
+> Nilai-nilai ini membuat PaddleOCR lebih toleran terhadap teks kecil/tipis serta mematikan modul doc-unwarping yang kerap mengubah channel gambar menjadi grayscale pada desktop capture. Bila ingin eksperimen sendiri, edit `config.yaml` dan jalankan ulang `python -m app.cli snip`.
+
 #### 4.2. Panduan rinci untuk Kali Linux (XFCE)
 
 Langkah berikut diuji pada **Kali Linux 2024.x (rolling) dengan desktop XFCE** yang baru terpasang. Jika Anda memakai flavour lain (GNOME/Wayland), lihat catatan di akhir sub-bab.

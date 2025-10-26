@@ -117,6 +117,27 @@ class PaddleOCREngine:
         if config.structure_version:
             ocr_kwargs["structure_version"] = config.structure_version
 
+        detection_overrides = {
+            "det_limit_side_len": config.det_limit_side_len,
+            "det_limit_type": config.det_limit_type,
+            "det_db_unclip_ratio": config.det_db_unclip_ratio,
+            "det_db_box_thresh": config.det_db_box_thresh,
+            "det_db_thresh": config.det_db_thresh,
+            "rec_score_thresh": config.rec_score_thresh,
+        }
+        for key, value in detection_overrides.items():
+            if value is not None:
+                ocr_kwargs[key] = value
+
+        doc_overrides = {
+            "use_doc_orientation_classify": config.use_doc_orientation_classify,
+            "use_doc_unwarping": config.use_doc_unwarping,
+            "use_textline_orientation": config.use_textline_orientation,
+        }
+        for key, value in doc_overrides.items():
+            if value is not None:
+                ocr_kwargs[key] = value
+
         self._engine_factory = PaddleOCR
         signature = inspect.signature(PaddleOCR.__init__)
         supported_params = {
