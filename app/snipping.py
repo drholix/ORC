@@ -34,6 +34,7 @@ except ImportError:  # pragma: no cover
 
 from .config import OCRConfig, load_config
 from .image_utils import ensure_bgr_image
+from .inference import DummyOCREngine
 from .service import OCRService
 
 
@@ -218,6 +219,13 @@ def run_snipping_ocr(config: Optional[OCRConfig] = None) -> Optional[str]:
         print("GPU not detected. Falling back to CPU for snipping OCR.")
         resolved_config.enable_gpu = False
     service = OCRService(resolved_config)
+    engine = getattr(service, "engine", None)
+    if isinstance(engine, DummyOCREngine):
+        print(
+            "Warning: PaddleOCR dependencies are missing. The snipping tool "
+            "will return placeholder text until paddlepaddle and paddleocr "
+            "are installed."
+        )
 
     selector = RegionSelector()
     selection = selector.select()

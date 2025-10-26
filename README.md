@@ -82,16 +82,25 @@ Langkah-langkahnya:
 > Mulai versi ini `config.yaml` menyalakan tweak deteksi berikut secara default:
 >
 > ```yaml
-> det_limit_side_len: 1080
-> det_limit_type: "max"
-> det_db_unclip_ratio: 1.5
-> det_db_box_thresh: 0.5
-> det_db_thresh: 0.2
-> rec_score_thresh: 0.5
+> text_det_limit_side_len: 1080
+> text_det_limit_type: "max"
+> text_det_unclip_ratio: 1.5
+> text_det_box_thresh: 0.5
+> text_det_db_thresh: 0.2
+> text_rec_score_thresh: 0.5
 > use_doc_orientation_classify: false
+> use_doc_preprocessor: false
 > use_doc_unwarping: false
 > use_textline_orientation: false
 > ```
+>
+> **Masih muncul `dummy-ocr-output` atau "No text detected"?**
+>
+> 1. Pastikan log terminal tidak menampilkan peringatan `engine_fallback_dummy`. Jika muncul, instal `paddlepaddle` (CPU: `pip install paddlepaddle==3.2.0 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/`) dan `paddleocr>=3.3.0`, lalu jalankan ulang perintah snipping.
+> 2. Verifikasi folder model `~/.paddlex/official_models/` berisi setiap model yang disebutkan di log. Bila ada yang korup, hapus foldernya agar otomatis diunduh ulang.
+> 3. Coba skrip minimal: `python - <<'PY' ...` (lihat bagian debug) untuk memastikan PaddleOCR dapat membaca contoh gambar di luar pipeline kita.
+> 4. Eksperimen dengan ambang deteksi di atas (misal ubah `text_det_box_thresh: 0.4`) jika teks Anda sangat tipis atau kontrasnya rendah.
+> 5. Clipboard tidak terisi? Jalankan `python - <<'PY': import pyperclip; pyperclip.copy('test')` guna memastikan backend clipboard aktif. Di Linux pastikan utilitas `xclip`/`wl-clipboard` terinstal sesuai desktop environment.
 >
 > Nilai-nilai ini membuat PaddleOCR lebih toleran terhadap teks kecil/tipis serta mematikan modul doc-unwarping yang kerap mengubah channel gambar menjadi grayscale pada desktop capture. Bila ingin eksperimen sendiri, edit `config.yaml` dan jalankan ulang `python -m app.cli snip`.
 

@@ -118,18 +118,25 @@ class PaddleOCREngine:
             ocr_kwargs["structure_version"] = config.structure_version
 
         detection_overrides = {
-            "det_limit_side_len": config.det_limit_side_len,
-            "det_limit_type": config.det_limit_type,
-            "det_db_unclip_ratio": config.det_db_unclip_ratio,
-            "det_db_box_thresh": config.det_db_box_thresh,
-            "det_db_thresh": config.det_db_thresh,
-            "rec_score_thresh": config.rec_score_thresh,
+            "text_det_limit_side_len": config.text_det_limit_side_len,
+            "det_limit_side_len": getattr(config, "det_limit_side_len", None),
+            "text_det_limit_type": config.text_det_limit_type,
+            "det_limit_type": getattr(config, "det_limit_type", None),
+            "text_det_unclip_ratio": config.text_det_unclip_ratio,
+            "det_db_unclip_ratio": getattr(config, "det_db_unclip_ratio", None),
+            "text_det_box_thresh": config.text_det_box_thresh,
+            "det_db_box_thresh": getattr(config, "det_db_box_thresh", None),
+            "text_det_db_thresh": config.text_det_db_thresh,
+            "det_db_thresh": getattr(config, "det_db_thresh", None),
+            "text_rec_score_thresh": config.text_rec_score_thresh,
+            "rec_score_thresh": getattr(config, "rec_score_thresh", None),
         }
         for key, value in detection_overrides.items():
             if value is not None:
                 ocr_kwargs[key] = value
 
         doc_overrides = {
+            "use_doc_preprocessor": config.use_doc_preprocessor,
             "use_doc_orientation_classify": config.use_doc_orientation_classify,
             "use_doc_unwarping": config.use_doc_unwarping,
             "use_textline_orientation": config.use_textline_orientation,
@@ -231,6 +238,13 @@ class PaddleOCREngine:
                 texts.append(text)
                 line_id += 1
             block_id += 1
+        if not texts:
+            self.logger.warning(
+                "paddle_empty_result",
+                duration_ms=duration_ms,
+                languages=list(languages),
+                runtime_kwargs=list(self._runtime_call_kwargs.keys()),
+            )
         return EngineOutput(
             text="\n".join(texts),
             blocks=blocks,

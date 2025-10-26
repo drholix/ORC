@@ -13,6 +13,16 @@ except ImportError:  # pragma: no cover - fallback when PyYAML unavailable
     yaml = None
 
 
+LEGACY_KEY_ALIASES = {
+    "det_limit_side_len": "text_det_limit_side_len",
+    "det_limit_type": "text_det_limit_type",
+    "det_db_unclip_ratio": "text_det_unclip_ratio",
+    "det_db_box_thresh": "text_det_box_thresh",
+    "det_db_thresh": "text_det_db_thresh",
+    "rec_score_thresh": "text_rec_score_thresh",
+}
+
+
 @dataclass
 class OCRConfig:
     """Dataclass representing the configurable options for the OCR pipeline."""
@@ -26,12 +36,13 @@ class OCRConfig:
     rec_model_dir: Optional[str] = None
     cls_model_dir: Optional[str] = None
     structure_version: Optional[str] = None
-    det_limit_side_len: Optional[int] = 1080
-    det_limit_type: Optional[str] = "max"
-    det_db_unclip_ratio: Optional[float] = 1.5
-    det_db_box_thresh: Optional[float] = 0.5
-    det_db_thresh: Optional[float] = 0.2
-    rec_score_thresh: Optional[float] = 0.5
+    text_det_limit_side_len: Optional[int] = 1080
+    text_det_limit_type: Optional[str] = "max"
+    text_det_unclip_ratio: Optional[float] = 1.5
+    text_det_box_thresh: Optional[float] = 0.5
+    text_det_db_thresh: Optional[float] = 0.2
+    text_rec_score_thresh: Optional[float] = 0.5
+    use_doc_preprocessor: Optional[bool] = False
     use_doc_orientation_classify: Optional[bool] = False
     use_doc_unwarping: Optional[bool] = False
     use_textline_orientation: Optional[bool] = False
@@ -70,6 +81,15 @@ class OCRConfig:
 DEFAULT_CONFIG_PATH = Path("config.yaml")
 
 
+def _apply_legacy_aliases(data: dict) -> dict:
+    for old_key, new_key in LEGACY_KEY_ALIASES.items():
+        if old_key in data and new_key not in data:
+            data[new_key] = data[old_key]
+        if old_key in data:
+            data.pop(old_key, None)
+    return data
+
+
 def load_config(path: Optional[Path] = None) -> OCRConfig:
     """Load configuration from a YAML file if it exists."""
 
@@ -81,6 +101,9 @@ def load_config(path: Optional[Path] = None) -> OCRConfig:
             data = yaml.safe_load(raw) or {}
         else:
             data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise TypeError("Configuration file must define a mapping")
+        data = _apply_legacy_aliases(dict(data))
         return OCRConfig(**data)
     return OCRConfig()
 
