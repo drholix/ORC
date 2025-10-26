@@ -556,6 +556,41 @@ def test_paddle_engine_applies_detection_overrides(monkeypatch):
     assert captured_kwargs["use_textline_orientation"] is False
 
 
+def test_paddle_engine_falls_back_to_mobile_recognition(monkeypatch):
+    """Unsupported recognition models should fall back to a mobile variant."""
+
+    attempts: list[str | None] = []
+
+    class FakePaddleOCR:
+        def __init__(self, **kwargs) -> None:  # pragma: no cover - init only
+            attempts.append(kwargs.get("text_recognition_model_name"))
+            if kwargs.get("text_recognition_model_name") == "en_PP-OCRv5_server_rec":
+                raise ValueError(
+                    "The model (en_PP-OCRv5_server_rec) is not supported!"
+                )
+
+        def ocr(self, image, **kwargs):
+            return [
+                [
+                    (
+                        [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                        ("fallback", 0.9),
+                    )
+                ]
+            ]
+
+    sys.modules["paddleocr"] = SimpleNamespace(PaddleOCR=FakePaddleOCR)
+
+    config = OCRConfig(text_recognition_model_name="en_PP-OCRv5_server_rec")
+    engine = PaddleOCREngine(config)
+
+    result = engine.infer([[0, 0], [0, 0]], ["en"])
+
+    assert attempts[0] == "en_PP-OCRv5_server_rec"
+    assert any(name == "en_PP-OCRv5_mobile_rec" for name in attempts[1:])
+    assert result.text == "fallback"
+
+
 def test_paddle_engine_relaxed_retry(monkeypatch):
     """Empty results should trigger the relaxed fallback engine."""
 

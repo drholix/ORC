@@ -41,7 +41,7 @@ class OCRConfig:
     structure_version: Optional[str] = None
     text_detection_model_name: Optional[str] = "PP-OCRv5_server_det"
     text_detection_model_dir: Optional[str] = None
-    text_recognition_model_name: Optional[str] = "en_PP-OCRv5_server_rec"
+    text_recognition_model_name: Optional[str] = "en_PP-OCRv5_mobile_rec"
     text_recognition_model_dir: Optional[str] = None
     use_angle_cls: Optional[bool] = None
     text_det_limit_side_len: Optional[int] = 1080

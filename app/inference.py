@@ -5,7 +5,7 @@ import inspect
 import os
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Protocol, Sequence
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Protocol, Sequence
 
 import structlog
 
@@ -178,6 +178,9 @@ class PaddleOCREngine:
                 continue
             ocr_kwargs[key] = value
 
+        self._model_candidates: Dict[str, List[Optional[str]]] = {}
+        self._model_indexes: Dict[str, int] = {}
+
         self._engine_factory = PaddleOCR
         signature = inspect.signature(PaddleOCR.__init__)
         supported_params = {
@@ -212,6 +215,7 @@ class PaddleOCREngine:
                     ocr_kwargs.pop(key, None)
         self.device = "gpu" if use_gpu else "cpu"
         self._ocr_kwargs = ocr_kwargs
+        self._init_model_candidates(config, lang)
         self._sync_feature_flags()
         self._runtime_call_kwargs: Dict[str, Any] = {}
         self._fallback_engine = None
@@ -755,6 +759,12 @@ class PaddleOCREngine:
                     attempts += 1
                     continue
                 if (
+                    self._handle_model_not_supported_error(str(exc))
+                    and attempts < 5
+                ):
+                    attempts += 1
+                    continue
+                if (
                     self._handle_mutually_exclusive_error(str(exc))
                     and attempts < 5
                 ):
@@ -776,6 +786,12 @@ class PaddleOCREngine:
                     LOGGER.debug("drop_unknown_param", param=unknown)
                     self._ocr_kwargs.pop(unknown, None)
                     self._sync_feature_flags()
+                    attempts += 1
+                    continue
+                if (
+                    self._handle_model_not_supported_error(str(exc))
+                    and attempts < 5
+                ):
                     attempts += 1
                     continue
                 if (
@@ -843,6 +859,149 @@ class PaddleOCREngine:
         self.textline_orientation_enabled = bool(
             self._ocr_kwargs.get("use_textline_orientation", False)
         )
+
+    def _init_model_candidates(self, config: OCRConfig, lang: str) -> None:
+        candidates = self._build_model_candidates(config, lang)
+        if not candidates:
+            return
+        self._model_candidates = candidates
+        self._model_indexes = {key: 0 for key in candidates}
+        for key, sequence in candidates.items():
+            if not sequence:
+                continue
+            current = self._ocr_kwargs.get(key)
+            if current is None and sequence[0] is not None:
+                continue
+            if current is not None:
+                continue
+            # ensure we respect ``None`` defaults when the first candidate is explicit
+            self._set_model_choice(key, sequence[0])
+
+    def _build_model_candidates(
+        self, config: OCRConfig, lang: str
+    ) -> Dict[str, List[Optional[str]]]:
+        def append_unique(container: List[Optional[str]], value: Optional[str]) -> None:
+            if value in (None, ""):
+                return
+            if value not in container:
+                container.append(value)
+
+        candidates: Dict[str, List[Optional[str]]] = {}
+
+        detection_sequence: List[Optional[str]] = []
+        append_unique(detection_sequence, config.text_detection_model_name)
+        for fallback in (
+            "PP-OCRv5_server_det",
+            "PP-OCRv5_det",
+            "PP-OCRv4_det",
+            "PP-OCRv3_det",
+        ):
+            append_unique(detection_sequence, fallback)
+        detection_sequence.append(None)
+        candidates["text_detection_model_name"] = detection_sequence
+
+        recognition_sequence: List[Optional[str]] = []
+        append_unique(recognition_sequence, config.text_recognition_model_name)
+
+        lang_key = lang.lower()
+        lang_specific = {
+            "en": [
+                "en_PP-OCRv5_server_rec",
+                "en_PP-OCRv5_mobile_rec",
+                "en_PP-OCRv5_rec",
+                "en_PP-OCRv4_rec",
+            ],
+            "multilingual": [
+                "multilingual_PP-OCRv5_rec",
+                "multilingual_PP-OCRv4_rec",
+            ],
+        }
+        for fallback in lang_specific.get(lang_key, []):
+            append_unique(recognition_sequence, fallback)
+
+        generic_fallbacks = [
+            f"{lang_key}_PP-OCRv5_mobile_rec",
+            f"{lang_key}_PP-OCRv5_rec",
+            f"{lang_key}_PP-OCRv4_rec",
+            "PP-OCRv5_rec",
+            "PP-OCRv4_rec",
+            "PP-OCRv3_rec",
+        ]
+        for fallback in generic_fallbacks:
+            append_unique(recognition_sequence, fallback)
+
+        recognition_sequence.append(None)
+        candidates["text_recognition_model_name"] = recognition_sequence
+
+        return candidates
+
+    def _set_model_choice(self, key: str, value: Optional[str]) -> None:
+        if value in (None, ""):
+            self._ocr_kwargs.pop(key, None)
+        else:
+            self._ocr_kwargs[key] = value
+
+    def _advance_model_choice(self, key: str, failing_value: str) -> bool:
+        sequence = self._model_candidates.get(key)
+        if not sequence:
+            return False
+        try:
+            current_index = sequence.index(failing_value)
+        except ValueError:
+            current_value = self._ocr_kwargs.get(key)
+            try:
+                current_index = sequence.index(current_value)
+            except ValueError:
+                current_index = self._model_indexes.get(key, -1)
+        next_index = current_index + 1
+        baseline = sequence[current_index] if 0 <= current_index < len(sequence) else None
+        while (
+            baseline is not None
+            and next_index < len(sequence)
+            and sequence[next_index] == baseline
+        ):
+            next_index += 1
+        if next_index < len(sequence):
+            replacement = sequence[next_index]
+            self._model_indexes[key] = next_index
+            self._set_model_choice(key, replacement)
+            LOGGER.warning(
+                "paddle_model_fallback",
+                target=key,
+                previous=failing_value,
+                replacement=replacement or "paddle-default",
+            )
+            return True
+        if self._ocr_kwargs.get(key) is not None:
+            self._model_indexes[key] = next_index
+            self._set_model_choice(key, None)
+            LOGGER.warning(
+                "paddle_model_fallback",
+                target=key,
+                previous=failing_value,
+                replacement="paddle-default",
+            )
+            return True
+        return False
+
+    def _handle_model_not_supported_error(self, message: str) -> bool:
+        marker = "model ("
+        if marker not in message:
+            return False
+        tail = message.split(marker, 1)[1]
+        if ")" not in tail:
+            return False
+        failing_value = tail.split(")", 1)[0].strip()
+        if not failing_value:
+            return False
+        for key in ("text_detection_model_name", "text_recognition_model_name"):
+            current = self._ocr_kwargs.get(key)
+            if current != failing_value:
+                continue
+            if self._advance_model_choice(key, failing_value):
+                self._sync_feature_flags()
+                return True
+        return False
 
     def _refresh_runtime_call_kwargs(self) -> None:
         """Determine runtime kwargs (like ``cls`` and thresholds) supported by the engine."""
