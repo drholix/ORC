@@ -135,7 +135,8 @@ class OCRService:
             image_size=meta.get("image_size"),
         )
         preprocess_result = self.preprocessor.run(image)
-        engine_output = self.engine.infer(preprocess_result.image, self.config.languages)
+        engine_input = preprocess_result.image
+        engine_output = self.engine.infer(engine_input, self.config.languages)
         if not engine_output.text.strip():
             self.logger.warning(
                 "engine_returned_empty_text",
@@ -152,7 +153,8 @@ class OCRService:
 
         table_meta: Dict[str, object] = {}
         if self.config.table_mode:
-            tables = detect_table_cells(preprocess_result.image)
+            table_image = preprocess_result.processed or preprocess_result.image
+            tables = detect_table_cells(table_image)
             table_meta["tables"] = [
                 {"bbox": bbox, "cells": len(tables.cells)} for bbox in tables.bounding_boxes
             ]

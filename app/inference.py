@@ -905,9 +905,14 @@ class PaddleOCREngine:
 
         lang_key = lang.lower()
         lang_specific = {
+            # PaddleOCR 3.2 ships the mobile recogniser by default while the
+            # server variant lives in PaddleX-only bundles.  Prefer the
+            # mobile weights first so environments without the server model do
+            # not immediately raise "model not supported" and fall back to the
+            # dummy engine.
             "en": [
-                "en_PP-OCRv5_server_rec",
                 "en_PP-OCRv5_mobile_rec",
+                "en_PP-OCRv5_server_rec",
                 "en_PP-OCRv5_rec",
                 "en_PP-OCRv4_rec",
             ],

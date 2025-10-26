@@ -29,6 +29,7 @@ class PreprocessResult:
     steps: List[str]
     metadata: Dict[str, float]
     original: Any | None = None
+    processed: Any | None = None
 
 
 class Preprocessor:
@@ -50,6 +51,7 @@ class Preprocessor:
                 steps=steps,
                 metadata=metadata,
                 original=image,
+                processed=image,
             )
 
         working = self._ensure_max_size(self._as_array(image))
@@ -116,10 +118,11 @@ class Preprocessor:
             metadata["original_shape"] = list(color_reference.shape)  # type: ignore[index]
             metadata["original_mean"] = float(color_reference.mean())  # type: ignore[arg-type]
         return PreprocessResult(
-            image=processed,
+            image=color_reference,
             steps=steps,
             metadata=metadata,
             original=color_reference,
+            processed=processed,
         )
 
     def _ensure_max_size(self, image: Any) -> Any:
