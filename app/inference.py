@@ -150,18 +150,18 @@ class PaddleOCREngine:
             if value is not None:
                 ocr_kwargs[key] = value
 
+        textline_pref = config.use_textline_orientation
+        if textline_pref is None:
+            textline_pref = False
+
         doc_overrides = {
             "use_doc_preprocessor": config.use_doc_preprocessor,
             "use_doc_orientation_classify": config.use_doc_orientation_classify,
             "use_doc_unwarping": config.use_doc_unwarping,
-            "use_textline_orientation": config.use_textline_orientation,
+            "use_textline_orientation": textline_pref,
         }
         for key, value in doc_overrides.items():
             if value is None:
-                continue
-            if key == "use_textline_orientation" and not value:
-                # PaddleOCR 3.2 treats the explicit False flag as enabling the
-                # feature, so skip wiring it through unless the user requests it.
                 continue
             ocr_kwargs[key] = value
 
@@ -201,6 +201,8 @@ class PaddleOCREngine:
         self._ocr_kwargs = ocr_kwargs
         self._sync_feature_flags()
         self._runtime_call_kwargs: Dict[str, Any] = {}
+        self._fallback_engine = None
+        self._fallback_runtime_kwargs: Dict[str, Any] = {}
         self._gpu_retry_done = False
         self._language_failures: set[str] = set()
         self.ocr = self._create_engine_instance()
@@ -235,34 +237,14 @@ class PaddleOCREngine:
         start = time.perf_counter()
         results = self._call_ocr(image)
         duration_ms = (time.perf_counter() - start) * 1000
-        blocks: List[Dict[str, Any]] = []
-        texts: List[str] = []
-        block_id = 0
-        line_id = 0
-        for page in results:
-            for entry in page:
-                parsed = self._parse_page_entry(entry)
-                if parsed is None:
-                    self.logger.debug(
-                        "skip_ocr_entry",
-                        entry_type=type(entry).__name__,
-                    )
-                    continue
-                bbox, text, score = parsed
-                if score < self.config.min_confidence or not text:
-                    continue
-                blocks.append(
-                    {
-                        "bbox": self._flatten_bbox(bbox),
-                        "text": text,
-                        "confidence": float(score),
-                        "block_id": block_id,
-                        "line_id": line_id,
-                    }
-                )
-                texts.append(text)
-                line_id += 1
-            block_id += 1
+        blocks, texts = self._build_blocks(results)
+
+        if not texts:
+            fallback = self._retry_with_relaxed_settings(image)
+            if fallback is not None:
+                results, blocks, texts, fallback_duration = fallback
+                duration_ms += fallback_duration
+
         if not texts:
             self.logger.warning(
                 "paddle_empty_result",
@@ -331,6 +313,154 @@ class PaddleOCREngine:
             else:
                 flat.append(float(point))
         return flat
+
+    def _build_blocks(self, results: Any) -> tuple[List[Dict[str, Any]], List[str]]:
+        blocks: List[Dict[str, Any]] = []
+        texts: List[str] = []
+        block_id = 0
+        for page in results:
+            line_id = 0
+            for entry in page:
+                parsed = self._parse_page_entry(entry)
+                if parsed is None:
+                    self.logger.debug(
+                        "skip_ocr_entry",
+                        entry_type=type(entry).__name__,
+                    )
+                    continue
+                bbox, text, score = parsed
+                if score < self.config.min_confidence or not text:
+                    continue
+                blocks.append(
+                    {
+                        "bbox": self._flatten_bbox(bbox),
+                        "text": text,
+                        "confidence": float(score),
+                        "block_id": block_id,
+                        "line_id": line_id,
+                    }
+                )
+                texts.append(text)
+                line_id += 1
+            block_id += 1
+        return blocks, texts
+
+    def _retry_with_relaxed_settings(
+        self, image: NDArray
+    ) -> tuple[Any, List[Dict[str, Any]], List[str], float] | None:
+        """Attempt secondary OCR passes when the first call yields no text."""
+
+        strategies = [self._retry_with_rgb, self._retry_with_relaxed_engine]
+        for strategy in strategies:
+            outcome = strategy(image)
+            if outcome is None:
+                continue
+            results, blocks, texts, duration_ms, label = outcome
+            if texts:
+                self.logger.info(
+                    "paddle_retry_success",
+                    strategy=label,
+                    blocks=len(blocks),
+                )
+                return results, blocks, texts, duration_ms
+        return None
+
+    def _retry_with_rgb(
+        self, image: NDArray
+    ) -> tuple[Any, List[Dict[str, Any]], List[str], float, str] | None:
+        if np is None:
+            return None
+        if not hasattr(image, "shape"):
+            return None
+        if getattr(image, "ndim", 0) != 3:
+            return None
+        start = time.perf_counter()
+        rgb_image = image[..., ::-1]
+        try:
+            results = self.ocr.ocr(rgb_image, **self._runtime_call_kwargs)
+        except Exception as exc:  # pragma: no cover - runtime guard
+            self.logger.debug("paddle_retry_rgb_failed", error=str(exc))
+            return None
+        duration_ms = (time.perf_counter() - start) * 1000
+        blocks, texts = self._build_blocks(results)
+        if not texts:
+            return None
+        return results, blocks, texts, duration_ms, "rgb"
+
+    def _retry_with_relaxed_engine(
+        self, image: NDArray
+    ) -> tuple[Any, List[Dict[str, Any]], List[str], float, str] | None:
+        engine = self._get_relaxed_engine()
+        if engine is None:
+            return None
+        start = time.perf_counter()
+        try:
+            results = engine.ocr(image, **self._fallback_runtime_kwargs)
+        except Exception as exc:  # pragma: no cover - runtime guard
+            self.logger.debug("paddle_relaxed_infer_failed", error=str(exc))
+            return None
+        duration_ms = (time.perf_counter() - start) * 1000
+        blocks, texts = self._build_blocks(results)
+        if not texts:
+            return None
+        return results, blocks, texts, duration_ms, "relaxed"
+
+    def _get_relaxed_engine(self):  # type: ignore[no-untyped-def]
+        if self._fallback_engine is not None:
+            return self._fallback_engine
+        relaxed_kwargs = dict(self._ocr_kwargs)
+        relaxed_kwargs.update(
+            {
+                "lang": "en" if self.lang in {"latin", "multilingual"} else self.lang,
+                "text_det_box_thresh": min(
+                    float(relaxed_kwargs.get("text_det_box_thresh", 0.5) or 0.5), 0.4
+                ),
+                "text_det_db_thresh": min(
+                    float(relaxed_kwargs.get("text_det_db_thresh", 0.2) or 0.2), 0.15
+                ),
+                "text_det_unclip_ratio": max(
+                    float(relaxed_kwargs.get("text_det_unclip_ratio", 1.5) or 1.5), 2.0
+                ),
+                "text_rec_score_thresh": min(
+                    float(relaxed_kwargs.get("text_rec_score_thresh", 0.5) or 0.5), 0.3
+                ),
+                "use_doc_preprocessor": False,
+                "use_doc_orientation_classify": False,
+                "use_doc_unwarping": False,
+                "use_textline_orientation": False,
+            }
+        )
+        relaxed_kwargs.pop("use_angle_cls", None)
+        try:
+            engine = self._engine_factory(**relaxed_kwargs)  # type: ignore[call-arg]
+        except Exception as exc:  # pragma: no cover - runtime guard
+            self.logger.debug("paddle_relaxed_init_failed", error=str(exc))
+            self._fallback_engine = None
+            self._fallback_runtime_kwargs = {}
+            return None
+        self._fallback_engine = engine
+        self._fallback_runtime_kwargs = self._compute_runtime_kwargs(engine)
+        # ``cls`` can reintroduce the unexpected keyword errors on 3.2, so drop it.
+        self._fallback_runtime_kwargs.pop("cls", None)
+        return engine
+
+    @staticmethod
+    def _compute_runtime_kwargs(engine: Any) -> Dict[str, Any]:
+        kwargs: Dict[str, Any] = {}
+        ocr_method = getattr(engine, "ocr", None)
+        if ocr_method is None:
+            return kwargs
+        try:
+            signature = inspect.signature(ocr_method)
+        except (TypeError, ValueError):  # pragma: no cover - signature unavailable
+            return kwargs
+        accepts_kwargs = any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in signature.parameters.values()
+        )
+        if "cls" in signature.parameters or accepts_kwargs:
+            kwargs["cls"] = True
+        return kwargs
 
     def _create_engine_instance(self):  # type: ignore[no-untyped-def]
         attempts = 0

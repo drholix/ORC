@@ -417,4 +417,42 @@ def test_paddle_engine_applies_detection_overrides(monkeypatch):
     assert captured_kwargs["use_doc_preprocessor"] is False
     assert captured_kwargs["use_doc_orientation_classify"] is False
     assert captured_kwargs["use_doc_unwarping"] is False
-    assert "use_textline_orientation" not in captured_kwargs
+    assert captured_kwargs["use_textline_orientation"] is False
+
+
+def test_paddle_engine_relaxed_retry(monkeypatch):
+    """Empty results should trigger the relaxed fallback engine."""
+
+    instances: list[object] = []
+
+    class FakePaddleOCR:
+        def __init__(self, **kwargs) -> None:  # pragma: no cover - init only
+            self.kwargs = dict(kwargs)
+            instances.append(self)
+
+        def ocr(self, image, **kwargs):
+            if self is instances[0]:
+                return [[]]
+            return [
+                [
+                    (
+                        [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                        ("relaxed", 0.87),
+                    )
+                ]
+            ]
+
+    sys.modules["paddleocr"] = SimpleNamespace(PaddleOCR=FakePaddleOCR)
+
+    config = OCRConfig(min_confidence=0.2)
+    engine = PaddleOCREngine(config)
+
+    result = engine.infer([[0, 0], [0, 0]], ["en"])
+
+    assert len(instances) >= 2
+    assert result.text == "relaxed"
+    assert any(
+        isinstance(getattr(instance, "kwargs", {}), dict)
+        and instance.kwargs.get("text_det_box_thresh") in {0.3, 0.4}
+        for instance in instances
+    )
