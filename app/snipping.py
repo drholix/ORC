@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import sys
 from dataclasses import dataclass
 from typing import Optional
@@ -188,6 +189,21 @@ def _show_popup(text: str, duration_ms: Optional[float]) -> None:
     root.mainloop()
 
 
+def _gpu_available() -> bool:
+    """Best-effort probe to check whether Paddle can see a GPU."""
+
+    try:  # pragma: no cover - depends on heavy optional dependency
+        import paddle  # type: ignore
+
+        device = getattr(paddle, "device", None)
+        cuda = getattr(device, "cuda", None)
+        if callable(getattr(cuda, "device_count", None)):
+            return bool(cuda.device_count())  # type: ignore[no-any-return]
+    except Exception:  # pragma: no cover - probing failure falls back to CPU
+        return False
+    return False
+
+
 def run_snipping_ocr(config: Optional[OCRConfig] = None) -> Optional[str]:
     """Launch the interactive snipping overlay and run OCR on the captured area."""
 
@@ -198,8 +214,13 @@ def run_snipping_ocr(config: Optional[OCRConfig] = None) -> Optional[str]:
     if np is None or cv2 is None:
         raise RuntimeError("numpy and opencv-python are required for snipping OCR")
 
-    resolved_config = config or load_config()
-    resolved_config.enable_gpu = False  # ensure CPU-friendly defaults
+    if config is not None:
+        resolved_config = dataclasses.replace(config)
+    else:
+        resolved_config = load_config()
+    if resolved_config.enable_gpu and not _gpu_available():
+        print("GPU not detected. Falling back to CPU for snipping OCR.")
+        resolved_config.enable_gpu = False
     service = OCRService(resolved_config)
 
     selector = RegionSelector()

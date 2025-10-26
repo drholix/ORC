@@ -55,3 +55,51 @@ def test_capture_region_rounds_coordinates(monkeypatch: pytest.MonkeyPatch) -> N
     snipping._capture_region(selection)
 
     assert recorder.last_monitor == {"left": 1, "top": 4, "width": 50, "height": 11}
+
+
+def test_run_snipping_ocr_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    selection = snipping.Selection(left=0, top=0, width=100, height=50)
+
+    monkeypatch.setattr(snipping, "tk", object(), raising=False)
+    monkeypatch.setattr(snipping, "mss", object(), raising=False)
+    monkeypatch.setattr(snipping, "np", object(), raising=False)
+    monkeypatch.setattr(snipping, "cv2", object(), raising=False)
+    monkeypatch.setattr(snipping, "_gpu_available", lambda: False)
+
+    class _Selector:
+        def select(self) -> snipping.Selection:
+            return selection
+
+    monkeypatch.setattr(snipping, "RegionSelector", _Selector)
+    monkeypatch.setattr(snipping, "_capture_region", lambda _sel: "image")
+    monkeypatch.setattr(snipping, "_encode_image", lambda _image: b"payload")
+
+    captured: dict[str, object] = {}
+
+    class _Response:
+        def __init__(self) -> None:
+            self.text = "Detected"
+            self.meta = {"duration_ms": 42.0}
+
+    class _Service:
+        def __init__(self, config: snipping.OCRConfig) -> None:
+            captured["config"] = config
+
+        def process_image(self, payload: bytes) -> _Response:
+            captured["payload"] = payload
+            return _Response()
+
+    monkeypatch.setattr(snipping, "OCRService", _Service)
+    monkeypatch.setattr(snipping, "_copy_to_clipboard", lambda text: captured.setdefault("copied", text))
+    monkeypatch.setattr(
+        snipping,
+        "_show_popup",
+        lambda text, duration: captured.setdefault("popup", (text, duration)),
+    )
+
+    result = snipping.run_snipping_ocr(snipping.OCRConfig())
+
+    assert result == "Detected"
+    assert captured["payload"] == b"payload"
+    assert captured["copied"] == "Detected"
+    assert captured["popup"] == ("Detected", 42.0)

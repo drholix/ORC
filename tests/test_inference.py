@@ -136,3 +136,101 @@ def test_create_engine_falls_back_to_dummy(monkeypatch):
     engine = create_engine(OCRConfig())
 
     assert isinstance(engine, DummyOCREngine)
+
+
+def test_paddle_engine_runtime_drops_cls_argument(monkeypatch):
+    """TypeErrors mentioning ``cls`` should trigger a retry without that kwarg."""
+
+    calls: list[dict[str, object]] = []
+
+    class FakePaddleOCR:
+        def __init__(self, **kwargs) -> None:  # pragma: no cover - init only
+            self.kwargs = kwargs
+
+        def ocr(self, image, **kwargs):
+            calls.append(dict(kwargs))
+            if len(calls) == 1 and "cls" in kwargs:
+                raise TypeError("PaddleOCR.predict() got an unexpected keyword argument 'cls'")
+            return [
+                [
+                    (
+                        [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                        ("hello", 0.99),
+                    )
+                ]
+            ]
+
+    sys.modules["paddleocr"] = SimpleNamespace(PaddleOCR=FakePaddleOCR)
+
+    config = OCRConfig()
+    engine = PaddleOCREngine(config)
+    result = engine.infer([[0, 0], [0, 0]], ["en"])
+
+    assert result.text == "hello"
+    assert calls[0] == {"cls": True}
+    assert calls[-1] == {}
+
+
+def test_paddle_engine_runtime_handles_missing_cls_parameter(monkeypatch):
+    """When ``ocr`` lacks the ``cls`` parameter it should not be passed."""
+
+    class FakePaddleOCR:
+        def __init__(self, **kwargs) -> None:  # pragma: no cover - init only
+            self.kwargs = kwargs
+
+        def ocr(self, image):
+            return [
+                [
+                    (
+                        [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                        ("text", 0.95),
+                    )
+                ]
+            ]
+
+    sys.modules["paddleocr"] = SimpleNamespace(PaddleOCR=FakePaddleOCR)
+
+    config = OCRConfig()
+    engine = PaddleOCREngine(config)
+
+    assert "cls" not in engine._runtime_call_kwargs
+    result = engine.infer([[0, 0], [0, 0]], ["en"])
+    assert result.text == "text"
+
+
+def test_paddle_engine_falls_back_to_cpu_when_gpu_fails(monkeypatch):
+    """GPU initialization errors should trigger a CPU retry."""
+
+    calls: list[dict[str, object]] = []
+
+    class FakePaddleOCR:
+        def __init__(self, *, use_gpu: bool | None = None, **kwargs) -> None:
+            snapshot = dict(kwargs)
+            snapshot["use_gpu"] = use_gpu
+            calls.append(snapshot)
+            if use_gpu:
+                raise RuntimeError("CUDA init failed")
+
+        def ocr(self, image, cls=True):
+            return [
+                [
+                    (
+                        [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                        ("cpu", 0.9),
+                    )
+                ]
+            ]
+
+    sys.modules["paddleocr"] = SimpleNamespace(PaddleOCR=FakePaddleOCR)
+
+    config = OCRConfig(enable_gpu=True)
+    engine = PaddleOCREngine(config)
+
+    assert len(calls) >= 2
+    assert calls[0].get("use_gpu") is True
+    assert calls[-1].get("use_gpu") in (False, None)
+    assert engine.device == "cpu"
+
+    result = engine.infer([[0, 0], [0, 0]], ["en"])
+    assert result.device == "cpu"
+    assert result.text == "cpu"

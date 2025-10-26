@@ -150,7 +150,10 @@ class PaddleOCREngine:
                     ocr_kwargs.pop(key, None)
         self.device = "gpu" if use_gpu else "cpu"
         self._ocr_kwargs = ocr_kwargs
+        self._runtime_call_kwargs: Dict[str, Any] = {}
+        self._gpu_retry_done = False
         self.ocr = self._create_engine_instance()
+        self._refresh_runtime_call_kwargs()
         self.config = config
         self.logger = LOGGER.bind(
             engine="paddle",
@@ -171,10 +174,11 @@ class PaddleOCREngine:
             self.lang = requested_lang
             self._ocr_kwargs["lang"] = requested_lang
             self.ocr = self._create_engine_instance()
+            self._refresh_runtime_call_kwargs()
         if np is not None and not isinstance(image, np.ndarray):  # type: ignore[arg-type]
             image = np.asarray(image)  # type: ignore[assignment]
         start = time.perf_counter()
-        results = self.ocr.ocr(image, cls=True)
+        results = self._call_ocr(image)
         duration_ms = (time.perf_counter() - start) * 1000
         blocks: List[Dict[str, Any]] = []
         texts: List[str] = []
@@ -263,6 +267,9 @@ class PaddleOCREngine:
                     self._ocr_kwargs.pop(unknown, None)
                     attempts += 1
                     continue
+                if self._maybe_retry_without_gpu(exc):
+                    attempts += 1
+                    continue
                 raise RuntimeError(f"Failed to initialize PaddleOCR: {exc}") from exc
             except TypeError as exc:
                 unknown = self._extract_unknown_argument(str(exc))
@@ -271,17 +278,27 @@ class PaddleOCREngine:
                     self._ocr_kwargs.pop(unknown, None)
                     attempts += 1
                     continue
+                if self._maybe_retry_without_gpu(exc):
+                    attempts += 1
+                    continue
                 raise RuntimeError(f"Failed to initialize PaddleOCR: {exc}") from exc
             except Exception as exc:  # pragma: no cover - runtime safeguard
+                if self._maybe_retry_without_gpu(exc):
+                    attempts += 1
+                    continue
                 raise RuntimeError(f"Failed to initialize PaddleOCR: {exc}") from exc
 
     @staticmethod
     def _extract_unknown_argument(message: str) -> str | None:
-        marker = "Unknown argument"
-        if marker not in message:
+        markers = ["Unknown argument", "unexpected keyword argument"]
+        tail = None
+        for marker in markers:
+            if marker in message:
+                tail = message.split(marker, 1)[1]
+                break
+        if tail is None:
             return None
         # Handle messages like "Unknown argument: use_gpu" or TypeError variants.
-        tail = message.split(marker, 1)[1]
         if ":" in tail:
             candidate = tail.split(":", 1)[1]
         else:
@@ -291,6 +308,57 @@ class PaddleOCREngine:
             if delimiter in candidate:
                 candidate = candidate.split(delimiter, 1)[0]
         return candidate.strip("'\" ") or None
+
+    def _refresh_runtime_call_kwargs(self) -> None:
+        """Determine runtime kwargs (like ``cls``) supported by the engine."""
+
+        self._runtime_call_kwargs = {}
+        ocr_method = getattr(self.ocr, "ocr", None)
+        if ocr_method is None:
+            return
+        try:
+            signature = inspect.signature(ocr_method)
+        except (TypeError, ValueError):  # pragma: no cover - signature unavailable
+            return
+        accepts_kwargs = any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in signature.parameters.values()
+        )
+        if "cls" in signature.parameters or accepts_kwargs:
+            self._runtime_call_kwargs["cls"] = True
+
+    def _call_ocr(self, image: NDArray):  # type: ignore[no-untyped-def]
+        attempts = 0
+        while True:
+            try:
+                return self.ocr.ocr(image, **self._runtime_call_kwargs)
+            except TypeError as exc:
+                unknown = self._extract_unknown_argument(str(exc))
+                if (
+                    unknown == "cls"
+                    and "cls" in self._runtime_call_kwargs
+                    and attempts < 3
+                ):
+                    LOGGER.debug("drop_runtime_param", param="cls")
+                    self._runtime_call_kwargs.pop("cls", None)
+                    attempts += 1
+                    continue
+                raise
+
+    def _maybe_retry_without_gpu(self, exc: Exception) -> bool:
+        """Fallback to CPU when GPU initialization fails."""
+
+        if not self._ocr_kwargs.get("use_gpu"):
+            return False
+        if self._gpu_retry_done:
+            return False
+        LOGGER.warning("paddle_gpu_retry_cpu", error=str(exc))
+        self._ocr_kwargs["use_gpu"] = False
+        if "device" in self._ocr_kwargs:
+            self._ocr_kwargs["device"] = "cpu"
+        self.device = "cpu"
+        self._gpu_retry_done = True
+        return True
 
 
 def create_engine(config: OCRConfig, force_dummy: bool = False) -> BaseOCREngine:
