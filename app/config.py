@@ -18,8 +18,11 @@ LEGACY_KEY_ALIASES = {
     "det_limit_type": "text_det_limit_type",
     "det_db_unclip_ratio": "text_det_unclip_ratio",
     "det_db_box_thresh": "text_det_box_thresh",
-    "det_db_thresh": "text_det_db_thresh",
+    "det_db_thresh": "text_det_thresh",
+    "text_det_db_thresh": "text_det_thresh",
     "rec_score_thresh": "text_rec_score_thresh",
+    "det_model_name": "text_detection_model_name",
+    "rec_model_name": "text_recognition_model_name",
 }
 
 
@@ -36,12 +39,16 @@ class OCRConfig:
     rec_model_dir: Optional[str] = None
     cls_model_dir: Optional[str] = None
     structure_version: Optional[str] = None
+    text_detection_model_name: Optional[str] = "PP-OCRv5_server_det"
+    text_detection_model_dir: Optional[str] = None
+    text_recognition_model_name: Optional[str] = "en_PP-OCRv5_mobile_rec"
+    text_recognition_model_dir: Optional[str] = None
     use_angle_cls: Optional[bool] = None
     text_det_limit_side_len: Optional[int] = 1080
     text_det_limit_type: Optional[str] = "max"
     text_det_unclip_ratio: Optional[float] = 1.5
     text_det_box_thresh: Optional[float] = 0.5
-    text_det_db_thresh: Optional[float] = 0.2
+    text_det_thresh: Optional[float] = 0.2
     text_rec_score_thresh: Optional[float] = 0.5
     use_doc_preprocessor: Optional[bool] = False
     use_doc_orientation_classify: Optional[bool] = False

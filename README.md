@@ -86,7 +86,7 @@ Langkah-langkahnya:
 > text_det_limit_type: "max"
 > text_det_unclip_ratio: 1.5
 > text_det_box_thresh: 0.5
-> text_det_db_thresh: 0.2
+> text_det_thresh: 0.2
 > text_rec_score_thresh: 0.5
 > use_doc_orientation_classify: false
 > use_doc_preprocessor: false

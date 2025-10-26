@@ -394,9 +394,11 @@ def test_paddle_engine_applies_detection_overrides(monkeypatch):
     config = OCRConfig(
         text_det_limit_side_len=720,
         text_det_limit_type="min",
+        text_detection_model_name="custom_det",
+        text_recognition_model_name="custom_rec",
         text_det_unclip_ratio=2.1,
         text_det_box_thresh=0.45,
-        text_det_db_thresh=0.15,
+        text_det_thresh=0.15,
         text_rec_score_thresh=0.4,
         use_doc_preprocessor=False,
         use_doc_orientation_classify=False,
@@ -412,8 +414,10 @@ def test_paddle_engine_applies_detection_overrides(monkeypatch):
     assert captured_kwargs["text_det_limit_type"] == "min"
     assert captured_kwargs["text_det_unclip_ratio"] == 2.1
     assert captured_kwargs["text_det_box_thresh"] == 0.45
-    assert captured_kwargs["text_det_db_thresh"] == 0.15
+    assert captured_kwargs["text_det_thresh"] == 0.15
     assert captured_kwargs["text_rec_score_thresh"] == 0.4
+    assert captured_kwargs["text_detection_model_name"] == "custom_det"
+    assert captured_kwargs["text_recognition_model_name"] == "custom_rec"
     assert captured_kwargs["use_doc_preprocessor"] is False
     assert captured_kwargs["use_doc_orientation_classify"] is False
     assert captured_kwargs["use_doc_unwarping"] is False

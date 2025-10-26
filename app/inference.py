@@ -131,6 +131,14 @@ class PaddleOCREngine:
             ocr_kwargs["cls_model_dir"] = config.cls_model_dir
         if config.structure_version:
             ocr_kwargs["structure_version"] = config.structure_version
+        if config.text_detection_model_name:
+            ocr_kwargs["text_detection_model_name"] = config.text_detection_model_name
+        if config.text_detection_model_dir:
+            ocr_kwargs["text_detection_model_dir"] = config.text_detection_model_dir
+        if config.text_recognition_model_name:
+            ocr_kwargs["text_recognition_model_name"] = config.text_recognition_model_name
+        if config.text_recognition_model_dir:
+            ocr_kwargs["text_recognition_model_dir"] = config.text_recognition_model_dir
 
         detection_overrides = {
             "text_det_limit_side_len": config.text_det_limit_side_len,
@@ -141,7 +149,7 @@ class PaddleOCREngine:
             "det_db_unclip_ratio": getattr(config, "det_db_unclip_ratio", None),
             "text_det_box_thresh": config.text_det_box_thresh,
             "det_db_box_thresh": getattr(config, "det_db_box_thresh", None),
-            "text_det_db_thresh": config.text_det_db_thresh,
+            "text_det_thresh": config.text_det_thresh,
             "det_db_thresh": getattr(config, "det_db_thresh", None),
             "text_rec_score_thresh": config.text_rec_score_thresh,
             "rec_score_thresh": getattr(config, "rec_score_thresh", None),
@@ -415,8 +423,8 @@ class PaddleOCREngine:
                 "text_det_box_thresh": min(
                     float(relaxed_kwargs.get("text_det_box_thresh", 0.5) or 0.5), 0.4
                 ),
-                "text_det_db_thresh": min(
-                    float(relaxed_kwargs.get("text_det_db_thresh", 0.2) or 0.2), 0.15
+                "text_det_thresh": min(
+                    float(relaxed_kwargs.get("text_det_thresh", 0.2) or 0.2), 0.15
                 ),
                 "text_det_unclip_ratio": max(
                     float(relaxed_kwargs.get("text_det_unclip_ratio", 1.5) or 1.5), 2.0
@@ -672,10 +680,10 @@ class PaddleOCREngine:
                     and attempts < 3
                 ):
                     LOGGER.debug("drop_runtime_param", param="cls")
-            self._runtime_call_kwargs.pop("cls", None)
-            attempts += 1
-            continue
-        raise
+                    self._runtime_call_kwargs.pop("cls", None)
+                    attempts += 1
+                    continue
+                raise
 
     def _handle_language_unavailable_error(self, message: str) -> bool:
         lowered = message.lower()
