@@ -187,9 +187,16 @@ class PaddleOCREngine:
         block_id = 0
         line_id = 0
         for page in results:
-            for bbox, info in page:
-                text, score = info
-                if score < self.config.min_confidence:
+            for entry in page:
+                parsed = self._parse_page_entry(entry)
+                if parsed is None:
+                    self.logger.debug(
+                        "skip_ocr_entry",
+                        entry_type=type(entry).__name__,
+                    )
+                    continue
+                bbox, text, score = parsed
+                if score < self.config.min_confidence or not text:
                     continue
                 blocks.append(
                     {
@@ -328,6 +335,74 @@ class PaddleOCREngine:
         )
         if "cls" in signature.parameters or accepts_kwargs:
             self._runtime_call_kwargs["cls"] = True
+
+    def _parse_page_entry(self, entry: Any) -> tuple[Any, str, float] | None:
+        """Normalise PaddleOCR outputs across versions.
+
+        PaddleOCR 3.x may return tuples, lists, or dict payloads per detection.
+        This helper extracts a ``(bbox, text, score)`` triple whenever possible.
+        """
+
+        bbox: Any
+        text: str = ""
+        score: float = 1.0
+
+        if isinstance(entry, dict):
+            bbox = (
+                entry.get("bbox")
+                or entry.get("box")
+                or entry.get("points")
+                or entry.get("poly")
+            )
+            text = str(entry.get("text") or entry.get("value") or "")
+            raw_score = entry.get("score")
+            if raw_score is None:
+                raw_score = entry.get("confidence")
+            if isinstance(raw_score, (int, float)):
+                score = float(raw_score)
+            if bbox is None:
+                return None
+            return bbox, text, score
+
+        if isinstance(entry, (list, tuple)) and entry:
+            bbox = entry[0]
+            remainder = entry[1:]
+            if not remainder:
+                return None
+
+            info = remainder[0]
+
+            def _extract_text_score(value: Any) -> tuple[str, float]:
+                candidate_text = ""
+                candidate_score = 1.0
+                if isinstance(value, (list, tuple)) and value:
+                    candidate_text = str(value[0])
+                    if len(value) > 1 and isinstance(value[1], (int, float)):
+                        candidate_score = float(value[1])
+                elif isinstance(value, dict):
+                    candidate_text = str(
+                        value.get("text") or value.get("value") or ""
+                    )
+                    raw = value.get("score")
+                    if raw is None:
+                        raw = value.get("confidence")
+                    if isinstance(raw, (int, float)):
+                        candidate_score = float(raw)
+                elif isinstance(value, str):
+                    candidate_text = value
+                return candidate_text, candidate_score
+
+            text, score = _extract_text_score(info)
+
+            if not text and len(remainder) > 1:
+                fallback_text, fallback_score = _extract_text_score(remainder[1])
+                if fallback_text:
+                    text = fallback_text
+                    score = fallback_score
+
+            return bbox, text, score
+
+        return None
 
     def _call_ocr(self, image: NDArray):  # type: ignore[no-untyped-def]
         attempts = 0

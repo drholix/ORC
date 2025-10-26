@@ -241,3 +241,59 @@ def test_paddle_engine_falls_back_to_cpu_when_gpu_fails(monkeypatch):
     result = engine.infer([[0, 0], [0, 0]], ["en"])
     assert result.device == "cpu"
     assert result.text == "cpu"
+
+
+def test_paddle_engine_handles_triplet_entries(monkeypatch):
+    """Tuple payloads with extra metadata should still be parsed."""
+
+    class FakePaddleOCR:
+        def __init__(self, **kwargs) -> None:  # pragma: no cover - init only
+            self.kwargs = kwargs
+
+        def ocr(self, image, **kwargs):
+            return [
+                [
+                    (
+                        [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                        ("triplet", 0.88),
+                        {"extra": True},
+                    )
+                ]
+            ]
+
+    sys.modules["paddleocr"] = SimpleNamespace(PaddleOCR=FakePaddleOCR)
+
+    config = OCRConfig()
+    engine = PaddleOCREngine(config)
+    result = engine.infer([[0, 0], [0, 0]], ["en"])
+
+    assert result.text == "triplet"
+    assert result.blocks[0]["confidence"] == pytest.approx(0.88)
+
+
+def test_paddle_engine_handles_dict_entries(monkeypatch):
+    """Dict payloads from PaddleOCR-VL should be normalised."""
+
+    class FakePaddleOCR:
+        def __init__(self, **kwargs) -> None:  # pragma: no cover - init only
+            self.kwargs = kwargs
+
+        def ocr(self, image, **kwargs):
+            return [
+                [
+                    {
+                        "bbox": [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                        "text": "dict",
+                        "score": 0.92,
+                    }
+                ]
+            ]
+
+    sys.modules["paddleocr"] = SimpleNamespace(PaddleOCR=FakePaddleOCR)
+
+    config = OCRConfig()
+    engine = PaddleOCREngine(config)
+    result = engine.infer([[0, 0], [0, 0]], ["en"])
+
+    assert result.text == "dict"
+    assert result.blocks[0]["confidence"] == pytest.approx(0.92)
