@@ -61,6 +61,11 @@ class OCRCache:
         payload = json.dumps(result)
         self._execute("REPLACE INTO cache (key, result) VALUES (?, ?)", (key, payload))
 
+    def delete(self, key: str) -> None:
+        """Remove a cache entry if it exists."""
+
+        self._execute("DELETE FROM cache WHERE key=?", (key,))
+
     def get_or_set(self, data: bytes, factory) -> Dict[str, Any]:
         key = self.compute_key(data)
         cached = self.get(key)

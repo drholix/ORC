@@ -116,17 +116,31 @@ class OCRService:
 
         cached = self.cache.get(key)
         if cached:
-            self.logger.info(
-                "cache_hit",
-                source=meta.get("source") or meta.get("path", "bytes"),
-                image_size=meta.get("image_size"),
-            )
-            return OCRResponse(
-                text=cached["text"],
-                language=cached.get("language", "mix"),
-                blocks=cached.get("blocks", []),
-                meta=cached.get("meta", {}),
-            )
+            cached_meta = cached.get("meta", {})
+            cached_engine = cached_meta.get("engine", {}) if isinstance(cached_meta, dict) else {}
+            is_dummy_cache = False
+            if isinstance(cached_engine, dict) and cached_engine.get("name") == "dummy":
+                is_dummy_cache = True
+            elif cached.get("text") == "dummy-ocr-output":
+                is_dummy_cache = True
+            if is_dummy_cache:
+                self.logger.info(
+                    "cache_skip_dummy",
+                    source=meta.get("source") or meta.get("path", "bytes"),
+                )
+                self.cache.delete(key)
+            else:
+                self.logger.info(
+                    "cache_hit",
+                    source=meta.get("source") or meta.get("path", "bytes"),
+                    image_size=meta.get("image_size"),
+                )
+                return OCRResponse(
+                    text=cached["text"],
+                    language=cached.get("language", "mix"),
+                    blocks=cached.get("blocks", []),
+                    meta=cached_meta,
+                )
 
         start = time.perf_counter()
         self.logger.info(
@@ -195,7 +209,13 @@ class OCRService:
             "blocks": post_result.blocks,
             "meta": meta,
         }
-        self.cache.set(key, result)
+        if isinstance(self.engine, DummyOCREngine):
+            self.logger.info(
+                "cache_skip_store_dummy",
+                source=meta.get("source") or meta.get("path", "bytes"),
+            )
+        else:
+            self.cache.set(key, result)
         self.logger.info(
             "process_complete",
             duration_ms=duration_ms,
