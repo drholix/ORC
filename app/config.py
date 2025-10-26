@@ -44,6 +44,7 @@ class OCRConfig:
     text_recognition_model_name: Optional[str] = "en_PP-OCRv5_mobile_rec"
     text_recognition_model_dir: Optional[str] = None
     use_angle_cls: Optional[bool] = None
+    preprocess_profile: str = "document"
     text_det_limit_side_len: Optional[int] = 1080
     text_det_limit_type: Optional[str] = "max"
     text_det_unclip_ratio: Optional[float] = 1.5

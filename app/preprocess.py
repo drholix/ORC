@@ -60,6 +60,33 @@ class Preprocessor:
         color_reference = ensure_bgr_image(working)
         steps.append("ensure_bgr")
 
+        profile = (self.config.preprocess_profile or "document").lower()
+        if profile in {"none", "raw"}:
+            return self._finalize(color_reference, color_reference, steps, metadata)
+        if profile in {"screen", "ui", "light"}:
+            return self._run_screen_profile(color_reference, steps, metadata)
+        return self._run_document_profile(color_reference, steps, metadata)
+
+    def _run_screen_profile(
+        self,
+        color_reference: Any,
+        steps: List[str],
+        metadata: Dict[str, float],
+    ) -> PreprocessResult:
+        processed = color_reference
+        if cv2 is not None:
+            start = time.perf_counter()
+            processed = self._screen_enhance(color_reference)
+            metadata["screen_enhance_ms"] = (time.perf_counter() - start) * 1000
+            steps.append("screen_enhance")
+        return self._finalize(color_reference, processed, steps, metadata)
+
+    def _run_document_profile(
+        self,
+        color_reference: Any,
+        steps: List[str],
+        metadata: Dict[str, float],
+    ) -> PreprocessResult:
         start = time.perf_counter()
         gray = self._to_gray(color_reference)
         metadata["grayscale_ms"] = (time.perf_counter() - start) * 1000
@@ -112,11 +139,29 @@ class Preprocessor:
         steps.append("morphology")
 
         processed = ensure_bgr_image(morphed)
+        return self._finalize(color_reference, processed, steps, metadata)
+
+    def _finalize(
+        self,
+        color_reference: Any,
+        processed: Any,
+        steps: List[str],
+        metadata: Dict[str, float],
+    ) -> PreprocessResult:
+        if np is not None and hasattr(color_reference, "shape"):
+            metadata.setdefault(
+                "original_shape", list(color_reference.shape)  # type: ignore[index]
+            )
+            metadata.setdefault(
+                "original_mean", float(color_reference.mean())  # type: ignore[arg-type]
+            )
         if np is not None and hasattr(processed, "shape"):
-            metadata["processed_shape"] = list(processed.shape)  # type: ignore[index]
-            metadata["processed_mean"] = float(processed.mean())  # type: ignore[arg-type]
-            metadata["original_shape"] = list(color_reference.shape)  # type: ignore[index]
-            metadata["original_mean"] = float(color_reference.mean())  # type: ignore[arg-type]
+            metadata.setdefault(
+                "processed_shape", list(processed.shape)  # type: ignore[index]
+            )
+            metadata.setdefault(
+                "processed_mean", float(processed.mean())  # type: ignore[arg-type]
+            )
         return PreprocessResult(
             image=color_reference,
             steps=steps,
@@ -124,6 +169,16 @@ class Preprocessor:
             original=color_reference,
             processed=processed,
         )
+
+    def _screen_enhance(self, image: Any) -> Any:
+        if cv2 is None:
+            return image
+        lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        l = clahe.apply(l)
+        merged = cv2.merge((l, a, b))
+        return cv2.cvtColor(merged, cv2.COLOR_LAB2BGR)
 
     def _ensure_max_size(self, image: Any) -> Any:
         if not hasattr(image, "shape"):

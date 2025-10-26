@@ -13,6 +13,7 @@
   "text_recognition_model_name": "en_PP-OCRv5_mobile_rec",
   "text_recognition_model_dir": null,
   "use_angle_cls": null,
+  "preprocess_profile": "document",
   "text_det_limit_side_len": 1080,
   "text_det_limit_type": "max",
   "text_det_unclip_ratio": 1.5,

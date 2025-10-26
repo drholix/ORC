@@ -26,6 +26,13 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--det-model", type=str, default=None)
     run_parser.add_argument("--rec-model", type=str, default=None)
     run_parser.add_argument("--cls-model", type=str, default=None)
+    run_parser.add_argument(
+        "--preprocess-profile",
+        type=str,
+        choices=["document", "screen", "none"],
+        default=None,
+        help="Select the preprocessing profile (document, screen, none)",
+    )
     run_parser.add_argument("--pdf-text", action="store_true", default=True)
     run_parser.add_argument("--no-pdf-text", action="store_false", dest="pdf_text")
     run_parser.add_argument("--handwriting", action="store_true", default=False)
@@ -52,6 +59,13 @@ def build_parser() -> argparse.ArgumentParser:
     snip_parser.add_argument("--det-model", type=str, default=None)
     snip_parser.add_argument("--rec-model", type=str, default=None)
     snip_parser.add_argument("--cls-model", type=str, default=None)
+    snip_parser.add_argument(
+        "--preprocess-profile",
+        type=str,
+        choices=["document", "screen", "none"],
+        default=None,
+        help="Override the preprocessing profile (defaults to screen)",
+    )
 
     return parser
 
@@ -74,6 +88,8 @@ def handle_run(args: argparse.Namespace) -> None:
         config.rec_model_dir = args.rec_model
     if args.cls_model:
         config.cls_model_dir = args.cls_model
+    if args.preprocess_profile:
+        config.preprocess_profile = args.preprocess_profile
     config.pdf_text = args.pdf_text
     config.handwriting_mode = args.handwriting
     config.table_mode = args.table_mode
@@ -126,6 +142,10 @@ def handle_snip(args: argparse.Namespace) -> None:
         config.rec_model_dir = args.rec_model
     if args.cls_model:
         config.cls_model_dir = args.cls_model
+    if args.preprocess_profile:
+        config.preprocess_profile = args.preprocess_profile
+    else:
+        config.preprocess_profile = "screen"
     from .snipping import run_snipping_ocr
 
     run_snipping_ocr(config)

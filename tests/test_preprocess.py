@@ -17,3 +17,17 @@ def test_preprocess_runs() -> None:
     else:
         assert "grayscale" in result.steps
         assert "morphology" in result.steps
+
+
+def test_preprocess_screen_profile() -> None:
+    config = OCRConfig(max_image_size=128, preprocess_profile="screen")
+    preprocessor = Preprocessor(config)
+    image = [[[0, 0, 0] for _ in range(32)] for _ in range(32)]
+    result = preprocessor.run(image)
+    assert result.original is not None
+    if "noop" in result.steps:
+        assert result.steps == ["noop"]
+    else:
+        assert "grayscale" not in result.steps
+        assert result.steps[0] == "ensure_max_size"
+        assert "ensure_bgr" in result.steps
