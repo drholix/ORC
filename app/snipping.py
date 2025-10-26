@@ -93,12 +93,12 @@ class RegionSelector:
             self.canvas.coords(self.rect, self.start_x, self.start_y, cur_x, cur_y)
 
     def _on_button_release(self, event: "tk.Event[tk.Misc]") -> None:  # type: ignore[name-defined]
-        end_x = int(self.canvas.canvasx(event.x))
-        end_y = int(self.canvas.canvasy(event.y))
-        left = int(min(self.start_x, end_x))
-        top = int(min(self.start_y, end_y))
-        width = abs(end_x - self.start_x)
-        height = abs(end_y - self.start_y)
+        end_x = int(round(self.canvas.canvasx(event.x)))
+        end_y = int(round(self.canvas.canvasy(event.y)))
+        left = int(round(min(self.start_x, end_x)))
+        top = int(round(min(self.start_y, end_y)))
+        width = int(round(abs(end_x - self.start_x)))
+        height = int(round(abs(end_y - self.start_y)))
         self.selection = Selection(left=left, top=top, width=width, height=height)
         self.root.quit()
 
@@ -119,10 +119,10 @@ def _capture_region(selection: Selection) -> Optional["np.ndarray"]:  # type: ig
         raise RuntimeError("mss and numpy are required to capture the screen")
     with mss.mss() as sct:  # type: ignore[attr-defined]
         monitor = {
-            "left": selection.left,
-            "top": selection.top,
-            "width": selection.width,
-            "height": selection.height,
+            "left": int(round(selection.left)),
+            "top": int(round(selection.top)),
+            "width": int(round(selection.width)),
+            "height": int(round(selection.height)),
         }
         grab = sct.grab(monitor)
         image = np.array(grab)
