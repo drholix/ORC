@@ -113,8 +113,37 @@ class PaddleOCREngine:
             ocr_kwargs["structure_version"] = config.structure_version
 
         self._engine_factory = PaddleOCR
-        if "show_log" not in inspect.signature(PaddleOCR.__init__).parameters:
+        signature = inspect.signature(PaddleOCR.__init__)
+        supported_params = {
+            name
+            for name, parameter in signature.parameters.items()
+            if parameter.kind
+            not in {
+                inspect.Parameter.VAR_POSITIONAL,
+                inspect.Parameter.VAR_KEYWORD,
+            }
+        }
+
+        supported_params.discard("self")
+
+        if "device" in signature.parameters:
+            ocr_kwargs["device"] = "gpu" if use_gpu else "cpu"
+
+        if "show_log" not in signature.parameters:
             ocr_kwargs.pop("show_log", None)
+
+        if "use_gpu" not in signature.parameters:
+            ocr_kwargs.pop("use_gpu", None)
+
+        accepts_kwargs = any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in signature.parameters.values()
+        )
+        if not accepts_kwargs:
+            for key in list(ocr_kwargs.keys()):
+                if key not in supported_params:
+                    LOGGER.debug("drop_unsupported_param", param=key)
+                    ocr_kwargs.pop(key, None)
         self._ocr_kwargs = ocr_kwargs
         self.ocr = self._engine_factory(**self._ocr_kwargs)  # type: ignore[call-arg]
         self.config = config

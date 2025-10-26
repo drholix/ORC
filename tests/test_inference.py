@@ -59,3 +59,30 @@ def test_paddle_engine_drops_unsupported_show_log(monkeypatch):
     engine = PaddleOCREngine(config)
 
     assert "show_log" not in engine._ocr_kwargs
+
+
+def test_paddle_engine_handles_device_param(monkeypatch):
+    """Ensure GPU toggles map to ``device`` when ``use_gpu`` is unsupported."""
+
+    captured_kwargs: dict[str, object] = {}
+
+    class FakePaddleOCR:
+        def __init__(self, *, use_angle_cls: bool, lang: str, device: str) -> None:
+            captured_kwargs.update(
+                {
+                    "use_angle_cls": use_angle_cls,
+                    "lang": lang,
+                    "device": device,
+                }
+            )
+
+        def ocr(self, image, cls=True):  # pragma: no cover - not exercised
+            return []
+
+    sys.modules["paddleocr"] = SimpleNamespace(PaddleOCR=FakePaddleOCR)
+
+    config = OCRConfig(enable_gpu=True)
+    PaddleOCREngine(config)
+
+    assert captured_kwargs["device"] == "gpu"
+    assert "use_gpu" not in captured_kwargs
