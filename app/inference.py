@@ -195,18 +195,20 @@ class PaddleOCREngine:
         self._sync_feature_flags()
         self._runtime_call_kwargs: Dict[str, Any] = {}
         self._gpu_retry_done = False
+        self._language_failures: set[str] = set()
         self.ocr = self._create_engine_instance()
         self._refresh_runtime_call_kwargs()
         self.config = config
+        current_lang = str(self._ocr_kwargs.get("lang", lang))
         self.logger = LOGGER.bind(
             engine="paddle",
             gpu=use_gpu,
-            lang=lang,
+            lang=current_lang,
             ocr_version=config.ocr_version,
             angle_cls=self.angle_cls_enabled,
             textline_orientation=self.textline_orientation_enabled,
         )
-        self.lang = lang
+        self.lang = current_lang
 
     def infer(self, image: NDArray, languages: Sequence[str]) -> EngineOutput:
         requested_lang = self._resolve_language(languages)
@@ -336,6 +338,12 @@ class PaddleOCREngine:
                 ):
                     attempts += 1
                     continue
+                if (
+                    self._handle_language_unavailable_error(str(exc))
+                    and attempts < 5
+                ):
+                    attempts += 1
+                    continue
                 if self._maybe_retry_without_gpu(exc):
                     attempts += 1
                     continue
@@ -350,6 +358,12 @@ class PaddleOCREngine:
                     continue
                 if (
                     self._handle_mutually_exclusive_error(str(exc))
+                    and attempts < 5
+                ):
+                    attempts += 1
+                    continue
+                if (
+                    self._handle_language_unavailable_error(str(exc))
                     and attempts < 5
                 ):
                     attempts += 1
@@ -508,10 +522,45 @@ class PaddleOCREngine:
                     and attempts < 3
                 ):
                     LOGGER.debug("drop_runtime_param", param="cls")
-                    self._runtime_call_kwargs.pop("cls", None)
-                    attempts += 1
-                    continue
-                raise
+            self._runtime_call_kwargs.pop("cls", None)
+            attempts += 1
+            continue
+        raise
+
+    def _handle_language_unavailable_error(self, message: str) -> bool:
+        lowered = message.lower()
+        if "language" not in lowered:
+            return False
+        if "no models" not in lowered and "not support" not in lowered:
+            return False
+        current = str(self._ocr_kwargs.get("lang") or "").strip()
+        if not current:
+            return False
+        fallback = self._next_language_candidate(current.lower())
+        if fallback is None:
+            return False
+        LOGGER.warning(
+            "paddle_language_fallback",
+            previous=current,
+            fallback=fallback,
+            error=message,
+        )
+        self._language_failures.add(current.lower())
+        self._ocr_kwargs["lang"] = fallback
+        self.lang = fallback
+        return True
+
+    def _next_language_candidate(self, current: str) -> str | None:
+        fallback_chain = {
+            "latin": ["multilingual", "en"],
+            "multilingual": ["en"],
+        }
+        tried = {lang.lower() for lang in self._language_failures}
+        tried.add(current)
+        for candidate in fallback_chain.get(current, []):
+            if candidate.lower() not in tried:
+                return candidate
+        return None
 
     def _maybe_retry_without_gpu(self, exc: Exception) -> bool:
         """Fallback to CPU when GPU initialization fails."""

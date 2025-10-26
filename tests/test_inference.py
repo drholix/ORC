@@ -326,6 +326,42 @@ def test_paddle_engine_handles_dict_entries(monkeypatch):
     assert result.blocks[0]["confidence"] == pytest.approx(0.92)
 
 
+def test_paddle_engine_falls_back_when_language_missing(monkeypatch):
+    """Language errors should trigger a retry with a fallback locale."""
+
+    calls: list[str] = []
+
+    class FakePaddleOCR:
+        def __init__(self, *, lang: str, **kwargs) -> None:  # pragma: no cover - init only
+            calls.append(lang)
+            if lang == "latin":
+                raise ValueError(
+                    "No models are available for the language 'latin' and OCR version 'PP-OCRv5'."
+                )
+
+        def ocr(self, image, **kwargs):
+            return [
+                [
+                    (
+                        [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                        ("fallback", 0.91),
+                    )
+                ]
+            ]
+
+    sys.modules["paddleocr"] = SimpleNamespace(PaddleOCR=FakePaddleOCR)
+
+    config = OCRConfig(languages=["id", "en"], ocr_version="PP-OCRv5")
+    engine = PaddleOCREngine(config)
+    result = engine.infer([[0, 0], [0, 0]], ["id", "en"])
+
+    assert calls[0] == "latin"
+    assert calls[-1] != "latin"
+    assert engine.lang == calls[-1]
+    assert result.language == engine.lang
+    assert result.text == "fallback"
+
+
 def test_paddle_engine_applies_detection_overrides(monkeypatch):
     """Detection thresholds should propagate to the PaddleOCR constructor."""
 
