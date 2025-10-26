@@ -493,16 +493,25 @@ class PaddleOCREngine:
         if "cls" in signature.parameters or accepts_kwargs:
             kwargs["cls"] = True
         candidates = self._runtime_parameter_candidates()
+        aliases = self._runtime_parameter_aliases()
         if extra_candidates:
             for key, value in extra_candidates.items():
                 if value is None:
                     continue
                 candidates[key] = value
-        for name, value in candidates.items():
+        for canonical_name, value in candidates.items():
             if value is None:
                 continue
-            if name in signature.parameters or accepts_kwargs:
-                kwargs[name] = value
+            chosen_name: str | None = None
+            if canonical_name in signature.parameters or accepts_kwargs:
+                chosen_name = canonical_name
+            else:
+                for alias in aliases.get(canonical_name, ()):  # pragma: no branch
+                    if alias in signature.parameters or accepts_kwargs:
+                        chosen_name = alias
+                        break
+            if chosen_name:
+                kwargs[chosen_name] = value
         return kwargs
 
     def _create_engine_instance(self):  # type: ignore[no-untyped-def]
@@ -625,21 +634,27 @@ class PaddleOCREngine:
         config = self.config
         return {
             "text_det_thresh": config.text_det_thresh,
-            "det_db_thresh": config.text_det_thresh,
             "text_det_box_thresh": config.text_det_box_thresh,
-            "det_db_box_thresh": config.text_det_box_thresh,
             "text_det_unclip_ratio": config.text_det_unclip_ratio,
-            "det_db_unclip_ratio": config.text_det_unclip_ratio,
             "text_det_limit_side_len": config.text_det_limit_side_len,
-            "det_limit_side_len": config.text_det_limit_side_len,
             "text_det_limit_type": config.text_det_limit_type,
-            "det_limit_type": config.text_det_limit_type,
             "text_rec_score_thresh": config.text_rec_score_thresh,
-            "rec_score_thresh": config.text_rec_score_thresh,
             "use_doc_preprocessor": config.use_doc_preprocessor,
             "use_doc_orientation_classify": config.use_doc_orientation_classify,
             "use_doc_unwarping": config.use_doc_unwarping,
             "use_textline_orientation": config.use_textline_orientation,
+        }
+
+    def _runtime_parameter_aliases(self) -> Dict[str, tuple[str, ...]]:
+        """Map canonical runtime kwargs to legacy aliases used by older releases."""
+
+        return {
+            "text_det_thresh": ("det_db_thresh",),
+            "text_det_box_thresh": ("det_db_box_thresh",),
+            "text_det_unclip_ratio": ("det_db_unclip_ratio",),
+            "text_det_limit_side_len": ("det_limit_side_len",),
+            "text_det_limit_type": ("det_limit_type",),
+            "text_rec_score_thresh": ("rec_score_thresh",),
         }
 
     def _parse_page_entry(self, entry: Any) -> tuple[Any, str, float] | None:
@@ -712,6 +727,7 @@ class PaddleOCREngine:
 
     def _call_ocr(self, image: NDArray):  # type: ignore[no-untyped-def]
         attempts = 0
+        max_attempts = max(3, len(self._runtime_call_kwargs) + 1)
         while True:
             try:
                 return self.ocr.ocr(image, **self._runtime_call_kwargs)
@@ -720,10 +736,19 @@ class PaddleOCREngine:
                 if (
                     unknown == "cls"
                     and "cls" in self._runtime_call_kwargs
-                    and attempts < 3
+                    and attempts < max_attempts
                 ):
                     LOGGER.debug("drop_runtime_param", param="cls")
                     self._runtime_call_kwargs.pop("cls", None)
+                    attempts += 1
+                    continue
+                if (
+                    unknown
+                    and unknown in self._runtime_call_kwargs
+                    and attempts < max_attempts
+                ):
+                    LOGGER.debug("drop_runtime_param", param=unknown)
+                    self._runtime_call_kwargs.pop(unknown, None)
                     attempts += 1
                     continue
                 raise

@@ -191,6 +191,43 @@ def test_paddle_engine_runtime_drops_cls_argument(monkeypatch):
     assert second_call == expected_without_cls
 
 
+def test_paddle_engine_runtime_drops_unknown_argument(monkeypatch):
+    """Unknown runtime kwargs should be removed before retrying."""
+
+    calls: list[dict[str, object]] = []
+
+    class FakePaddleOCR:
+        def __init__(self, **kwargs) -> None:  # pragma: no cover - init only
+            self.kwargs = kwargs
+
+        def ocr(self, image, **kwargs):
+            calls.append(dict(kwargs))
+            if len(calls) == 1:
+                raise TypeError(
+                    "PaddleOCR.predict() got an unexpected keyword argument 'det_db_thresh'"
+                )
+            return [
+                [
+                    (
+                        [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                        ("world", 0.97),
+                    )
+                ]
+            ]
+
+    sys.modules["paddleocr"] = SimpleNamespace(PaddleOCR=FakePaddleOCR)
+
+    config = OCRConfig()
+    engine = PaddleOCREngine(config)
+    engine._runtime_call_kwargs["det_db_thresh"] = 0.25
+
+    result = engine.infer([[0, 0], [0, 0]], ["en"])
+
+    assert result.text == "world"
+    assert len(calls) == 2
+    assert "det_db_thresh" not in calls[1]
+
+
 def test_paddle_engine_runtime_handles_missing_cls_parameter(monkeypatch):
     """When ``ocr`` lacks the ``cls`` parameter it should not be passed."""
 
