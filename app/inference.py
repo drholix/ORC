@@ -287,18 +287,32 @@ class PaddleOCREngine:
         if not normalized:
             return "en"
         auto_tokens = {"auto", "detect", "auto-detect", "auto_detect"}
-        if any(candidate in auto_tokens for candidate in normalized):
-            return "latin"
-        if len(set(normalized)) > 1:
-            return "latin"
-        candidate = normalized[0]
+        latin_aliases = {
+            "en",
+            "english",
+            "id",
+            "indonesian",
+            "latin",
+            "latin-script",
+            "mix",
+        }
+        filtered = [token for token in normalized if token not in auto_tokens]
+        if not filtered:
+            return "en"
+        unique = set(filtered)
+        if len(unique) > 1:
+            if unique.issubset(latin_aliases):
+                return "en"
+            return "multilingual"
+        candidate = filtered[0]
         mapping = {
             "en": "en",
             "english": "en",
-            "id": "latin",
-            "indonesian": "latin",
-            "latin": "latin",
-            "mix": "latin",
+            "latin": "en",
+            "latin-script": "en",
+            "mix": "en",
+            "id": "en",
+            "indonesian": "en",
             "multi": "multilingual",
             "multilingual": "multilingual",
             "ar": "arabic",

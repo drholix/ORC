@@ -235,9 +235,9 @@ def test_paddle_engine_disables_angle_cls_when_textline_enabled(monkeypatch):
     assert engine.angle_cls_enabled is False
 
 
-def test_resolve_language_auto_defaults_to_latin() -> None:
-    assert PaddleOCREngine._resolve_language(["auto"]) == "latin"
-    assert PaddleOCREngine._resolve_language(["id", "en"]) == "latin"
+def test_resolve_language_auto_defaults_to_en() -> None:
+    assert PaddleOCREngine._resolve_language(["auto"]) == "en"
+    assert PaddleOCREngine._resolve_language(["id", "en"]) == "en"
 
 
 def test_paddle_engine_falls_back_to_cpu_when_gpu_fails(monkeypatch):
@@ -342,9 +342,9 @@ def test_paddle_engine_falls_back_when_language_missing(monkeypatch):
     class FakePaddleOCR:
         def __init__(self, *, lang: str, **kwargs) -> None:  # pragma: no cover - init only
             calls.append(lang)
-            if lang == "latin":
+            if lang == "multilingual":
                 raise ValueError(
-                    "No models are available for the language 'latin' and OCR version 'PP-OCRv5'."
+                    "No models are available for the language 'multilingual' and OCR version 'PP-OCRv5'."
                 )
 
         def ocr(self, image, **kwargs):
@@ -359,12 +359,12 @@ def test_paddle_engine_falls_back_when_language_missing(monkeypatch):
 
     sys.modules["paddleocr"] = SimpleNamespace(PaddleOCR=FakePaddleOCR)
 
-    config = OCRConfig(languages=["id", "en"], ocr_version="PP-OCRv5")
+    config = OCRConfig(languages=["ru", "en"], ocr_version="PP-OCRv5")
     engine = PaddleOCREngine(config)
-    result = engine.infer([[0, 0], [0, 0]], ["id", "en"])
+    result = engine.infer([[0, 0], [0, 0]], ["ru", "en"])
 
-    assert calls[0] == "latin"
-    assert calls[-1] != "latin"
+    assert calls[0] == "multilingual"
+    assert calls[-1] == "en"
     assert engine.lang == calls[-1]
     assert result.language == engine.lang
     assert result.text == "fallback"

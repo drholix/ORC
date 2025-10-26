@@ -49,8 +49,11 @@ class Preprocessor:
         working = self._ensure_max_size(self._as_array(image))
         steps.append("ensure_max_size")
 
+        color_reference = ensure_bgr_image(working)
+        steps.append("ensure_bgr")
+
         start = time.perf_counter()
-        gray = self._to_gray(working)
+        gray = self._to_gray(color_reference)
         metadata["grayscale_ms"] = (time.perf_counter() - start) * 1000
         steps.append("grayscale")
 
@@ -101,7 +104,10 @@ class Preprocessor:
         steps.append("morphology")
 
         processed = ensure_bgr_image(morphed)
-        return PreprocessResult(image=processed, steps=steps, metadata=metadata)
+        if np is not None and hasattr(processed, "shape"):
+            metadata["processed_shape"] = list(processed.shape)  # type: ignore[index]
+            metadata["processed_mean"] = float(processed.mean())  # type: ignore[arg-type]
+        return PreprocessResult(image=color_reference, steps=steps, metadata=metadata)
 
     def _ensure_max_size(self, image: Any) -> Any:
         if not hasattr(image, "shape"):
