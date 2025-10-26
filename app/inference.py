@@ -19,6 +19,11 @@ try:  # pragma: no cover - optional dependency for runtime execution
 except ImportError:  # pragma: no cover - numpy is required only when running real OCR
     np = None  # type: ignore
 
+try:  # pragma: no cover - optional dependency for runtime execution
+    import cv2  # type: ignore
+except ImportError:  # pragma: no cover - OpenCV is optional at runtime
+    cv2 = None  # type: ignore
+
 if TYPE_CHECKING:  # pragma: no cover - typing helper
     from numpy.typing import NDArray
 else:  # pragma: no cover - fallback for environments without numpy
@@ -248,6 +253,17 @@ class PaddleOCREngine:
         blocks, texts = self._build_blocks(results)
 
         if not texts:
+            strategy = self._retry_with_preprocessing(image)
+            if strategy is not None:
+                results, blocks, texts, strategy_duration, strategy_label = strategy
+                duration_ms += strategy_duration
+                self.logger.info(
+                    "paddle_strategy_success",
+                    strategy=strategy_label,
+                    blocks=len(blocks),
+                )
+
+        if not texts:
             fallback = self._retry_with_relaxed_settings(image)
             if fallback is not None:
                 results, blocks, texts, fallback_duration = fallback
@@ -372,6 +388,150 @@ class PaddleOCREngine:
                 )
                 return results, blocks, texts, duration_ms
         return None
+
+    def _retry_with_preprocessing(
+        self, image: NDArray
+    ) -> tuple[Any, List[Dict[str, Any]], List[str], float, str] | None:
+        """Generate alternative image variants to improve detection success."""
+
+        if np is None:
+            return None
+
+        variants = self._generate_preprocessing_variants(image)
+        if not variants:
+            return None
+
+        for label, variant in variants:
+            start = time.perf_counter()
+            try:
+                results = self._call_ocr(variant)
+            except Exception as exc:  # pragma: no cover - runtime guard
+                self.logger.debug(
+                    "paddle_strategy_failed",
+                    strategy=label,
+                    error=str(exc),
+                )
+                continue
+
+            duration_ms = (time.perf_counter() - start) * 1000
+            blocks, texts = self._build_blocks(results)
+            if texts:
+                return results, blocks, texts, duration_ms, label
+
+        return None
+
+    def _generate_preprocessing_variants(
+        self, image: NDArray
+    ) -> List[tuple[str, NDArray]]:
+        if np is None:
+            return []
+
+        try:
+            array = np.asarray(image)
+        except Exception:  # pragma: no cover - runtime guard
+            return []
+
+        if array.dtype != np.uint8:
+            array = np.clip(array, 0, 255).astype("uint8")
+
+        variants: List[tuple[str, NDArray]] = []
+
+        inverted = self._invert_colors(array)
+        if inverted is not None:
+            variants.append(("inverted", inverted))
+
+        thresholded = self._adaptive_threshold(array)
+        if thresholded is not None:
+            variants.append(("threshold", thresholded))
+
+        contrast = self._enhance_contrast(array)
+        if contrast is not None:
+            variants.append(("contrast_enhanced", contrast))
+
+        # Remove duplicates that may share the same memory reference
+        unique: List[tuple[str, NDArray]] = []
+        seen_ids: set[int] = set()
+        for label, variant in variants:
+            identifier = id(variant)
+            if identifier in seen_ids:
+                continue
+            seen_ids.add(identifier)
+            unique.append((label, variant))
+        return unique
+
+    def _invert_colors(self, image: NDArray) -> NDArray | None:
+        if np is None:
+            return None
+        try:
+            if cv2 is not None:
+                return cv2.bitwise_not(image)
+            return 255 - image
+        except Exception:  # pragma: no cover - runtime guard
+            return None
+
+    def _adaptive_threshold(self, image: NDArray) -> NDArray | None:
+        if np is None:
+            return None
+        try:
+            gray = self._to_grayscale(image)
+            if gray is None:
+                return None
+            if cv2 is not None:
+                threshold = cv2.adaptiveThreshold(
+                    gray,
+                    255,
+                    cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                    cv2.THRESH_BINARY,
+                    21,
+                    9,
+                )
+            else:
+                mean_val = float(gray.mean())
+                threshold = np.where(gray > mean_val, 255, 0).astype("uint8")
+            return self._ensure_three_channel(threshold)
+        except Exception:  # pragma: no cover - runtime guard
+            return None
+
+    def _enhance_contrast(self, image: NDArray) -> NDArray | None:
+        if np is None:
+            return None
+        try:
+            if cv2 is not None:
+                lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+                l, a, b = cv2.split(lab)
+                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+                cl = clahe.apply(l)
+                merged = cv2.merge((cl, a, b))
+                return cv2.cvtColor(merged, cv2.COLOR_LAB2BGR)
+
+            float_img = image.astype("float32")
+            min_val = float(float_img.min())
+            max_val = float(float_img.max())
+            if max_val - min_val < 1e-3:
+                return image.copy()
+            norm = (float_img - min_val) / (max_val - min_val)
+            boosted = np.clip(norm * 255.0, 0, 255).astype("uint8")
+            return boosted
+        except Exception:  # pragma: no cover - runtime guard
+            return None
+
+    def _ensure_three_channel(self, image: NDArray) -> NDArray:
+        if np is None:
+            return image
+        if image.ndim == 2:
+            return np.stack([image] * 3, axis=-1)
+        return image
+
+    def _to_grayscale(self, image: NDArray) -> NDArray | None:
+        if np is None:
+            return None
+        if cv2 is not None:
+            return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        if image.ndim != 3:
+            return None
+        weights = np.array([0.114, 0.587, 0.299], dtype="float32")
+        gray = image.astype("float32") @ weights
+        return np.clip(gray, 0, 255).astype("uint8")
 
     def _retry_with_rgb(
         self, image: NDArray

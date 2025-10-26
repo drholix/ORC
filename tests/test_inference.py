@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from app.config import OCRConfig
@@ -226,6 +227,67 @@ def test_paddle_engine_runtime_drops_unknown_argument(monkeypatch):
     assert result.text == "world"
     assert len(calls) == 2
     assert "det_db_thresh" not in calls[1]
+
+
+def test_paddle_engine_inversion_strategy_recovers_text(monkeypatch):
+    """Dark themed captures should succeed via the inversion preprocessing strategy."""
+
+    class FakePaddleOCR:
+        def __init__(self, **kwargs) -> None:  # pragma: no cover - init only
+            self.kwargs = kwargs
+
+        def ocr(self, image, **kwargs):
+            pixel = int(image[0][0][0])
+            if pixel == 0:
+                return [[]]
+            return [
+                [
+                    (
+                        [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                        ("inverted", 0.93),
+                    )
+                ]
+            ]
+
+    sys.modules["paddleocr"] = SimpleNamespace(PaddleOCR=FakePaddleOCR)
+
+    image = np.zeros((2, 2, 3), dtype=np.uint8)
+    engine = PaddleOCREngine(OCRConfig())
+    result = engine.infer(image, ["en"])
+
+    assert result.text == "inverted"
+    assert result.blocks[0]["confidence"] == pytest.approx(0.93)
+
+
+def test_paddle_engine_preprocessing_without_cv2(monkeypatch):
+    """The preprocessing retry should function even when OpenCV is unavailable."""
+
+    class FakePaddleOCR:
+        def __init__(self, **kwargs) -> None:  # pragma: no cover - init only
+            self.kwargs = kwargs
+
+        def ocr(self, image, **kwargs):
+            pixel = int(image[0][0][0])
+            if pixel == 10:
+                return [[]]
+            return [
+                [
+                    (
+                        [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                        ("fallback", 0.88),
+                    )
+                ]
+            ]
+
+    sys.modules["paddleocr"] = SimpleNamespace(PaddleOCR=FakePaddleOCR)
+    monkeypatch.setattr("app.inference.cv2", None, raising=False)
+
+    image = np.full((2, 2, 3), 10, dtype=np.uint8)
+    engine = PaddleOCREngine(OCRConfig())
+    result = engine.infer(image, ["en"])
+
+    assert result.text == "fallback"
+    assert result.blocks[0]["confidence"] == pytest.approx(0.88)
 
 
 def test_paddle_engine_runtime_handles_missing_cls_parameter(monkeypatch):
