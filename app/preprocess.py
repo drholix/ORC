@@ -45,7 +45,7 @@ class Preprocessor:
             steps.append("noop")
             return PreprocessResult(image=image, steps=steps, metadata=metadata)
 
-        working = self._ensure_max_size(image)
+        working = self._ensure_max_size(self._as_array(image))
         steps.append("ensure_max_size")
 
         start = time.perf_counter()
@@ -102,6 +102,8 @@ class Preprocessor:
         return PreprocessResult(image=morphed, steps=steps, metadata=metadata)
 
     def _ensure_max_size(self, image: Any) -> Any:
+        if not hasattr(image, "shape"):
+            return image
         h, w = image.shape[:2]
         max_dim = max(h, w)
         if max_dim <= self.config.max_image_size:
@@ -109,6 +111,20 @@ class Preprocessor:
         scale = self.config.max_image_size / max_dim
         self.logger.info("downscale", scale=scale)
         return cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+
+    def _as_array(self, image: Any) -> Any:
+        if np is None:
+            return image
+        if isinstance(image, np.ndarray):
+            return image
+        if hasattr(image, "__array__"):
+            return np.asarray(image, dtype=np.uint8)
+        if isinstance(image, list):
+            try:
+                return np.asarray(image, dtype=np.uint8)
+            except TypeError:
+                return np.asarray(image)
+        return image
 
     def _to_gray(self, image: Any) -> Any:
         if len(image.shape) == 2:

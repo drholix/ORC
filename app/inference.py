@@ -1,6 +1,7 @@
 """Inference engines for OCR."""
 from __future__ import annotations
 
+import inspect
 import os
 import time
 from dataclasses import dataclass
@@ -112,6 +113,8 @@ class PaddleOCREngine:
             ocr_kwargs["structure_version"] = config.structure_version
 
         self._engine_factory = PaddleOCR
+        if "show_log" not in inspect.signature(PaddleOCR.__init__).parameters:
+            ocr_kwargs.pop("show_log", None)
         self._ocr_kwargs = ocr_kwargs
         self.ocr = self._engine_factory(**self._ocr_kwargs)  # type: ignore[call-arg]
         self.config = config

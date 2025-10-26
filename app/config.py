@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
@@ -10,7 +11,6 @@ try:
     import yaml
 except ImportError:  # pragma: no cover - fallback when PyYAML unavailable
     yaml = None
-import json
 
 
 @dataclass
