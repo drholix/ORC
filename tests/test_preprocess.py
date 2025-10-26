@@ -11,6 +11,7 @@ def test_preprocess_runs() -> None:
         assert result.image.shape[0] == 64
     else:
         assert len(result.image) == 64
+    assert result.original is not None
     if "noop" in result.steps:
         assert result.steps == ["noop"]
     else:

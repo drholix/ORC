@@ -436,17 +436,25 @@ class PaddleOCREngine:
 
         variants: List[tuple[str, NDArray]] = []
 
-        inverted = self._invert_colors(array)
-        if inverted is not None:
-            variants.append(("inverted", inverted))
+        bases: List[tuple[str, NDArray]] = [("base", array)]
+        bases.extend(self._scaled_bases(array))
 
-        thresholded = self._adaptive_threshold(array)
-        if thresholded is not None:
-            variants.append(("threshold", thresholded))
+        for label, scaled in bases[1:]:
+            variants.append((label, scaled))
 
-        contrast = self._enhance_contrast(array)
-        if contrast is not None:
-            variants.append(("contrast_enhanced", contrast))
+        transforms = (
+            ("inverted", self._invert_colors),
+            ("threshold", self._adaptive_threshold),
+            ("contrast_enhanced", self._enhance_contrast),
+        )
+
+        for base_label, base_image in bases:
+            for suffix, transform in transforms:
+                transformed = transform(base_image)
+                if transformed is None:
+                    continue
+                label = suffix if base_label == "base" else f"{base_label}_{suffix}"
+                variants.append((label, transformed))
 
         # Remove duplicates that may share the same memory reference
         unique: List[tuple[str, NDArray]] = []
@@ -458,6 +466,57 @@ class PaddleOCREngine:
             seen_ids.add(identifier)
             unique.append((label, variant))
         return unique
+
+    def _scaled_bases(self, image: NDArray) -> List[tuple[str, NDArray]]:
+        if np is None:
+            return []
+        if not hasattr(image, "shape"):
+            return []
+        height, width = image.shape[:2]
+        if height == 0 or width == 0:
+            return []
+
+        targets: List[float] = []
+        max_dim = float(max(height, width))
+        min_dim = float(min(height, width))
+
+        if max_dim < 1280:
+            targets.append(1280.0 / max_dim)
+        if min_dim < 480:
+            targets.append(480.0 / min_dim)
+
+        variants: List[tuple[str, NDArray]] = []
+        for scale in sorted({round(target, 2) for target in targets}, reverse=True):
+            if scale <= 1.05:
+                continue
+            scaled = self._scale_image(image, scale)
+            if scaled is not None:
+                variants.append((f"scale_{scale:.2f}", scaled))
+        return variants
+
+    def _scale_image(self, image: NDArray, scale: float) -> NDArray | None:
+        if np is None or scale <= 0:
+            return None
+        try:
+            if cv2 is not None:
+                interpolation = cv2.INTER_CUBIC if scale > 1 else cv2.INTER_AREA
+                return cv2.resize(image, None, fx=scale, fy=scale, interpolation=interpolation)
+            height, width = image.shape[:2]
+            new_h = max(1, int(round(height * scale)))
+            new_w = max(1, int(round(width * scale)))
+            row_idx = np.clip(
+                np.linspace(0, height - 1, new_h, dtype=int),
+                0,
+                height - 1,
+            )
+            col_idx = np.clip(
+                np.linspace(0, width - 1, new_w, dtype=int),
+                0,
+                width - 1,
+            )
+            return image[row_idx][:, col_idx]
+        except Exception:  # pragma: no cover - runtime guard
+            return None
 
     def _invert_colors(self, image: NDArray) -> NDArray | None:
         if np is None:

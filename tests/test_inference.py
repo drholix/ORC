@@ -259,6 +259,36 @@ def test_paddle_engine_inversion_strategy_recovers_text(monkeypatch):
     assert result.blocks[0]["confidence"] == pytest.approx(0.93)
 
 
+def test_paddle_engine_scale_strategy_expands_small_inputs(monkeypatch):
+    """Very small selections should succeed after the scale-up retry."""
+
+    class FakePaddleOCR:
+        def __init__(self, **kwargs) -> None:  # pragma: no cover - init only
+            self.kwargs = kwargs
+
+        def ocr(self, image, **kwargs):
+            height, width = image.shape[:2]
+            if max(height, width) <= 8:
+                return [[]]
+            return [
+                [
+                    (
+                        [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+                        ("scaled", 0.92),
+                    )
+                ]
+            ]
+
+    sys.modules["paddleocr"] = SimpleNamespace(PaddleOCR=FakePaddleOCR)
+
+    image = np.zeros((4, 4, 3), dtype=np.uint8)
+    engine = PaddleOCREngine(OCRConfig())
+    result = engine.infer(image, ["en"])
+
+    assert result.text == "scaled"
+    assert result.blocks[0]["confidence"] == pytest.approx(0.92)
+
+
 def test_paddle_engine_preprocessing_without_cv2(monkeypatch):
     """The preprocessing retry should function even when OpenCV is unavailable."""
 

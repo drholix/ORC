@@ -28,6 +28,7 @@ class PreprocessResult:
     image: Any
     steps: List[str]
     metadata: Dict[str, float]
+    original: Any | None = None
 
 
 class Preprocessor:
@@ -44,7 +45,12 @@ class Preprocessor:
         metadata: Dict[str, float] = {}
         if cv2 is None or np is None:
             steps.append("noop")
-            return PreprocessResult(image=image, steps=steps, metadata=metadata)
+            return PreprocessResult(
+                image=image,
+                steps=steps,
+                metadata=metadata,
+                original=image,
+            )
 
         working = self._ensure_max_size(self._as_array(image))
         steps.append("ensure_max_size")
@@ -107,7 +113,14 @@ class Preprocessor:
         if np is not None and hasattr(processed, "shape"):
             metadata["processed_shape"] = list(processed.shape)  # type: ignore[index]
             metadata["processed_mean"] = float(processed.mean())  # type: ignore[arg-type]
-        return PreprocessResult(image=color_reference, steps=steps, metadata=metadata)
+            metadata["original_shape"] = list(color_reference.shape)  # type: ignore[index]
+            metadata["original_mean"] = float(color_reference.mean())  # type: ignore[arg-type]
+        return PreprocessResult(
+            image=processed,
+            steps=steps,
+            metadata=metadata,
+            original=color_reference,
+        )
 
     def _ensure_max_size(self, image: Any) -> Any:
         if not hasattr(image, "shape"):

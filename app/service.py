@@ -179,6 +179,8 @@ class OCRService:
                 **table_meta,
             }
         )
+        if preprocess_result.original is not None:
+            meta["original_image_size"] = self._image_size(preprocess_result.original)
 
         if self.config.handwriting_mode:
             warnings = list(meta.get("warnings", []))
