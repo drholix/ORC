@@ -4,6 +4,7 @@ from __future__ import annotations
 import inspect
 import os
 import time
+from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Protocol, Sequence
 
@@ -345,8 +346,10 @@ class PaddleOCREngine:
     def _build_blocks(self, results: Any) -> tuple[List[Dict[str, Any]], List[str]]:
         blocks: List[Dict[str, Any]] = []
         texts: List[str] = []
+
+        pages = self._normalise_pages(results)
         block_id = 0
-        for page in results:
+        for page in pages:
             line_id = 0
             for entry in page:
                 parsed = self._parse_page_entry(entry)
@@ -371,7 +374,167 @@ class PaddleOCREngine:
                 texts.append(text)
                 line_id += 1
             block_id += 1
+
+        if blocks or not results:
+            return blocks, texts
+
+        fallback_entries = self._collect_entries(results)
+        if fallback_entries:
+            self.logger.debug(
+                "paddle_parse_fallback",
+                entries=len(fallback_entries),
+            )
+            blocks = []
+            texts = []
+            block_id = 0
+            for entry in fallback_entries:
+                parsed = self._parse_page_entry(entry)
+                if parsed is None:
+                    continue
+                bbox, text, score = parsed
+                if score < self.config.min_confidence or not text:
+                    continue
+                blocks.append(
+                    {
+                        "bbox": self._flatten_bbox(bbox),
+                        "text": text,
+                        "confidence": float(score),
+                        "block_id": block_id,
+                        "line_id": 0,
+                    }
+                )
+                texts.append(text)
+                block_id += 1
+
         return blocks, texts
+
+    def _normalise_pages(self, results: Any) -> List[List[Any]]:
+        """Normalise PaddleOCR outputs into a list of pages."""
+
+        def looks_like_entry(value: Any) -> bool:
+            if value is None or isinstance(value, (str, bytes)):
+                return False
+            if isinstance(value, dict):
+                bbox_candidate = (
+                    value.get("bbox")
+                    or value.get("box")
+                    or value.get("points")
+                    or value.get("polygon")
+                    or value.get("poly")
+                    or value.get("position")
+                )
+                text_candidate = (
+                    value.get("text")
+                    or value.get("value")
+                    or value.get("content")
+                    or value.get("label")
+                    or value.get("transcription")
+                )
+                if bbox_candidate is not None and text_candidate is not None:
+                    return True
+                line = value.get("line")
+                if isinstance(line, (dict, list, tuple)):
+                    return looks_like_entry(line)
+                return False
+            if isinstance(value, (list, tuple)):
+                if not value:
+                    return False
+                first = value[0]
+                if isinstance(first, (list, tuple)):
+                    return True
+                if isinstance(first, dict):
+                    return looks_like_entry(first)
+            return False
+
+        def extract_from_dict(payload: Dict[str, Any]) -> List[List[Any]]:
+            candidates: List[List[Any]] = []
+            for key in (
+                "result",
+                "results",
+                "res",
+                "data",
+                "records",
+                "predictions",
+                "pages",
+                "items",
+                "elements",
+            ):
+                value = payload.get(key)
+                if isinstance(value, list) and value:
+                    if looks_like_entry(value[0]):
+                        candidates.append(list(value))
+                        continue
+                    nested: List[List[Any]] = []
+                    for item in value:
+                        nested.extend(self._normalise_pages(item))
+                    if nested:
+                        candidates.extend(nested)
+            if not candidates and looks_like_entry(payload):
+                candidates.append([payload])
+            return candidates
+
+        if results is None:
+            return []
+
+        if isinstance(results, dict):
+            pages = extract_from_dict(results)
+            if pages:
+                return pages
+            return [[results]] if looks_like_entry(results) else []
+
+        if isinstance(results, (list, tuple)) and not isinstance(results, (str, bytes)):
+            if not results:
+                return []
+            if looks_like_entry(results[0]):
+                return [list(results)]
+            pages: List[List[Any]] = []
+            for item in results:
+                if looks_like_entry(item):
+                    pages.append([item])
+                    continue
+                if isinstance(item, dict):
+                    pages.extend(self._normalise_pages(item))
+                elif isinstance(item, (list, tuple)) and not isinstance(item, (str, bytes)):
+                    pages.extend(self._normalise_pages(item))
+            if pages:
+                return pages
+
+        if looks_like_entry(results):
+            return [[results]]
+
+        return []
+
+    def _collect_entries(self, results: Any) -> List[Any]:
+        if results is None:
+            return []
+
+        entries: List[Any] = []
+        queue: deque[Any] = deque([results])
+        seen: set[int] = set()
+
+        while queue:
+            item = queue.popleft()
+            if item is None or isinstance(item, (str, bytes)):
+                continue
+            identity = id(item)
+            if identity in seen:
+                continue
+            seen.add(identity)
+
+            if self._parse_page_entry(item) is not None:
+                entries.append(item)
+                continue
+
+            if isinstance(item, dict):
+                for value in item.values():
+                    if isinstance(value, (list, tuple, dict)) and not isinstance(
+                        value, (str, bytes)
+                    ):
+                        queue.append(value)
+            elif isinstance(item, (list, tuple)):
+                queue.extend(item)
+
+        return entries
 
     def _retry_with_relaxed_settings(
         self, image: NDArray
@@ -1052,20 +1215,57 @@ class PaddleOCREngine:
         score: float = 1.0
 
         if isinstance(entry, dict):
+            nested_line = entry.get("line")
+            if isinstance(nested_line, (dict, list, tuple)):
+                nested = self._parse_page_entry(nested_line)
+                if nested is not None:
+                    return nested
+
+            bbox_candidate = entry.get("bbox") or entry.get("box")
+            if isinstance(bbox_candidate, dict):
+                bbox_candidate = (
+                    bbox_candidate.get("bbox")
+                    or bbox_candidate.get("box")
+                    or bbox_candidate.get("points")
+                    or bbox_candidate.get("polygon")
+                    or bbox_candidate.get("poly")
+                )
             bbox = (
-                entry.get("bbox")
-                or entry.get("box")
+                bbox_candidate
                 or entry.get("points")
+                or entry.get("polygon")
                 or entry.get("poly")
+                or entry.get("position")
             )
-            text = str(entry.get("text") or entry.get("value") or "")
-            raw_score = entry.get("score")
-            if raw_score is None:
-                raw_score = entry.get("confidence")
-            if isinstance(raw_score, (int, float)):
-                score = float(raw_score)
             if bbox is None:
                 return None
+
+            text = str(
+                entry.get("text")
+                or entry.get("value")
+                or entry.get("content")
+                or entry.get("label")
+                or entry.get("transcription")
+                or ""
+            )
+
+            raw_score = (
+                entry.get("score")
+                or entry.get("confidence")
+                or entry.get("prob")
+                or entry.get("probability")
+            )
+            if isinstance(raw_score, dict):
+                raw_score = (
+                    raw_score.get("text")
+                    or raw_score.get("confidence")
+                    or raw_score.get("prob")
+                    or raw_score.get("probability")
+                )
+            if isinstance(raw_score, (list, tuple)) and raw_score:
+                raw_score = raw_score[0]
+            if isinstance(raw_score, (int, float)):
+                score = float(raw_score)
             return bbox, text, score
 
         if isinstance(entry, (list, tuple)) and entry:

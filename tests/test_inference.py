@@ -466,6 +466,76 @@ def test_paddle_engine_handles_dict_entries(monkeypatch):
     assert result.blocks[0]["confidence"] == pytest.approx(0.92)
 
 
+def test_paddle_engine_handles_nested_dict_entries(monkeypatch):
+    """Nested ``res`` payloads with ``line`` metadata should be parsed."""
+
+    class FakePaddleOCR:
+        def __init__(self, **kwargs) -> None:  # pragma: no cover - init only
+            self.kwargs = kwargs
+
+        def ocr(self, image, **kwargs):
+            return [
+                {
+                    "res": [
+                        {
+                            "line": {
+                                "points": [
+                                    [0.0, 0.0],
+                                    [1.0, 0.0],
+                                    [1.0, 1.0],
+                                    [0.0, 1.0],
+                                ],
+                                "content": "nested",
+                                "confidence": 0.87,
+                            }
+                        }
+                    ]
+                }
+            ]
+
+    sys.modules["paddleocr"] = SimpleNamespace(PaddleOCR=FakePaddleOCR)
+
+    config = OCRConfig()
+    engine = PaddleOCREngine(config)
+    result = engine.infer([[0, 0], [0, 0]], ["en"])
+
+    assert result.text == "nested"
+    assert result.blocks[0]["confidence"] == pytest.approx(0.87)
+
+
+def test_paddle_engine_handles_data_payload(monkeypatch):
+    """Top-level dicts with ``data`` lists should be treated as a page."""
+
+    class FakePaddleOCR:
+        def __init__(self, **kwargs) -> None:  # pragma: no cover - init only
+            self.kwargs = kwargs
+
+        def ocr(self, image, **kwargs):
+            return {
+                "data": [
+                    {
+                        "box": [
+                            [0.0, 0.0],
+                            [1.0, 0.0],
+                            [1.0, 1.0],
+                            [0.0, 1.0],
+                        ],
+                        "text": "data",
+                        "score": 0.91,
+                    }
+                ]
+            }
+
+    sys.modules["paddleocr"] = SimpleNamespace(PaddleOCR=FakePaddleOCR)
+
+    config = OCRConfig()
+    engine = PaddleOCREngine(config)
+    result = engine.infer([[0, 0], [0, 0]], ["en"])
+
+    assert result.text == "data"
+    assert result.blocks[0]["confidence"] == pytest.approx(0.91)
+
+
 def test_paddle_engine_falls_back_when_language_missing(monkeypatch):
     """Language errors should trigger a retry with a fallback locale."""
 
