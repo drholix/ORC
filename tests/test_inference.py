@@ -23,6 +23,13 @@ def clear_paddle_module():
             sys.modules["paddleocr"] = original
 
 
+@pytest.fixture(autouse=True)
+def _patch_image_utils(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Normalise the ensure_bgr_image helper for lightweight tests."""
+
+    monkeypatch.setattr("app.inference.ensure_bgr_image", lambda image: image)
+
+
 def test_paddle_engine_drops_unsupported_show_log(monkeypatch):
     """Verify that PaddleOCREngine removes unknown kwargs like ``show_log``."""
 

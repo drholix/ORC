@@ -8,6 +8,7 @@ from typing import Any, Dict, List
 import structlog
 
 from .config import OCRConfig
+from .image_utils import ensure_bgr_image
 
 LOGGER = structlog.get_logger(__name__)
 
@@ -99,7 +100,8 @@ class Preprocessor:
         metadata["morph_ms"] = (time.perf_counter() - start) * 1000
         steps.append("morphology")
 
-        return PreprocessResult(image=morphed, steps=steps, metadata=metadata)
+        processed = ensure_bgr_image(morphed)
+        return PreprocessResult(image=processed, steps=steps, metadata=metadata)
 
     def _ensure_max_size(self, image: Any) -> Any:
         if not hasattr(image, "shape"):

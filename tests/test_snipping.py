@@ -54,6 +54,8 @@ def _restore_modules(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_capture_region_rounds_coordinates(monkeypatch: pytest.MonkeyPatch) -> None:
     recorder = _RecordingMSS()
     monkeypatch.setattr(snipping, "mss", types.SimpleNamespace(mss=lambda: recorder))
+    captured = {}
+    monkeypatch.setattr(snipping, "ensure_bgr_image", lambda image: captured.setdefault("image", image))
     monkeypatch.setattr(
         snipping,
         "np",
@@ -69,9 +71,10 @@ def test_capture_region_rounds_coordinates(monkeypatch: pytest.MonkeyPatch) -> N
     )
 
     selection = snipping.Selection(left=1.2, top=3.7, width=50.4, height=10.9)  # type: ignore[arg-type]
-    snipping._capture_region(selection)
+    result = snipping._capture_region(selection)
 
     assert recorder.last_monitor == {"left": 1, "top": 4, "width": 50, "height": 11}
+    assert result is captured["image"]
 
 
 def test_capture_region_upgrades_grayscale(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -94,21 +97,13 @@ def test_capture_region_upgrades_grayscale(monkeypatch: pytest.MonkeyPatch) -> N
         converted["code"] = code
         return "converted"
 
-    monkeypatch.setattr(
-        snipping,
-        "cv2",
-        types.SimpleNamespace(
-            COLOR_BGRA2BGR=1,
-            COLOR_GRAY2BGR=2,
-            cvtColor=_convert,
-        ),
-    )
+    monkeypatch.setattr(snipping, "ensure_bgr_image", lambda image: _convert(image, 2))
 
     selection = snipping.Selection(left=0, top=0, width=10, height=10)
     result = snipping._capture_region(selection)
 
     assert result == "converted"
-    assert converted["code"] == 2
+    assert isinstance(converted["image"], _DummyGrab)
 
 
 def test_run_snipping_ocr_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -118,6 +113,7 @@ def test_run_snipping_ocr_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(snipping, "mss", object(), raising=False)
     monkeypatch.setattr(snipping, "np", object(), raising=False)
     monkeypatch.setattr(snipping, "cv2", object(), raising=False)
+    monkeypatch.setattr(snipping, "ensure_bgr_image", lambda image: image)
     monkeypatch.setattr(snipping, "_gpu_available", lambda: False)
 
     class _Selector:

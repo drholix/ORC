@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Protocol, Sequence
 import structlog
 
 from .config import OCRConfig
+from .image_utils import ensure_bgr_image
 
 LOGGER = structlog.get_logger(__name__)
 
@@ -177,6 +178,7 @@ class PaddleOCREngine:
             self._refresh_runtime_call_kwargs()
         if np is not None and not isinstance(image, np.ndarray):  # type: ignore[arg-type]
             image = np.asarray(image)  # type: ignore[assignment]
+        image = ensure_bgr_image(image)
         start = time.perf_counter()
         results = self._call_ocr(image)
         duration_ms = (time.perf_counter() - start) * 1000
