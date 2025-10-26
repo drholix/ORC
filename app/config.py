@@ -36,7 +36,7 @@ class OCRConfig:
     rec_model_dir: Optional[str] = None
     cls_model_dir: Optional[str] = None
     structure_version: Optional[str] = None
-    use_angle_cls: Optional[bool] = True
+    use_angle_cls: Optional[bool] = None
     text_det_limit_side_len: Optional[int] = 1080
     text_det_limit_type: Optional[str] = "max"
     text_det_unclip_ratio: Optional[float] = 1.5

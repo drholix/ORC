@@ -101,15 +101,15 @@ class PaddleOCREngine:
         device_choice = "gpu" if use_gpu else "cpu"
 
         textline_enabled = bool(config.use_textline_orientation)
-        angle_cls_flag = config.use_angle_cls
-        if angle_cls_flag is None:
-            angle_cls_flag = not textline_enabled
-        if textline_enabled and angle_cls_flag:
+        angle_cls_setting = config.use_angle_cls
+        if angle_cls_setting is None:
+            angle_cls_setting = False
+        if textline_enabled and angle_cls_setting:
             LOGGER.warning(
                 "angle_cls_textline_conflict",
                 message="Disabling angle classifier because textline orientation is enabled.",
             )
-            angle_cls_flag = False
+            angle_cls_setting = False
 
         ocr_kwargs: Dict[str, Any] = {
             "lang": lang,
@@ -117,8 +117,10 @@ class PaddleOCREngine:
             "device": device_choice,
             "show_log": False,
         }
-        if angle_cls_flag is not None:
-            ocr_kwargs["use_angle_cls"] = bool(angle_cls_flag)
+        if angle_cls_setting is True:
+            ocr_kwargs["use_angle_cls"] = True
+        elif config.use_angle_cls is False:
+            ocr_kwargs["use_angle_cls"] = False
         if config.ocr_version:
             ocr_kwargs["ocr_version"] = config.ocr_version
         if config.det_model_dir:
@@ -155,8 +157,13 @@ class PaddleOCREngine:
             "use_textline_orientation": config.use_textline_orientation,
         }
         for key, value in doc_overrides.items():
-            if value is not None:
-                ocr_kwargs[key] = value
+            if value is None:
+                continue
+            if key == "use_textline_orientation" and not value:
+                # PaddleOCR 3.2 treats the explicit False flag as enabling the
+                # feature, so skip wiring it through unless the user requests it.
+                continue
+            ocr_kwargs[key] = value
 
         self._engine_factory = PaddleOCR
         signature = inspect.signature(PaddleOCR.__init__)
@@ -403,19 +410,18 @@ class PaddleOCREngine:
         lowered = message.lower()
         if "mutually exclusive" not in lowered:
             return False
-        if self._ocr_kwargs.get("use_textline_orientation"):
+        changed = False
+        if "use_textline_orientation" in self._ocr_kwargs:
             LOGGER.warning("paddle_disable_textline_orientation", error=message)
-            self._ocr_kwargs["use_textline_orientation"] = False
-            if "use_angle_cls" not in self._ocr_kwargs:
-                self._ocr_kwargs["use_angle_cls"] = True
-            self._sync_feature_flags()
-            return True
-        if self._ocr_kwargs.get("use_angle_cls"):
+            self._ocr_kwargs.pop("use_textline_orientation", None)
+            changed = True
+        if "use_angle_cls" in self._ocr_kwargs:
             LOGGER.warning("paddle_disable_angle_cls", error=message)
-            self._ocr_kwargs["use_angle_cls"] = False
+            self._ocr_kwargs.pop("use_angle_cls", None)
+            changed = True
+        if changed:
             self._sync_feature_flags()
-            return True
-        return False
+        return changed
 
     def _sync_feature_flags(self) -> None:
         self.angle_cls_enabled = bool(self._ocr_kwargs.get("use_angle_cls", False))
@@ -552,7 +558,7 @@ class PaddleOCREngine:
 
     def _next_language_candidate(self, current: str) -> str | None:
         fallback_chain = {
-            "latin": ["multilingual", "en"],
+            "latin": ["en"],
             "multilingual": ["en"],
         }
         tried = {lang.lower() for lang in self._language_failures}

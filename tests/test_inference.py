@@ -37,7 +37,7 @@ def test_paddle_engine_drops_unsupported_show_log(monkeypatch):
         def __init__(
             self,
             *,
-            use_angle_cls: bool,
+            use_angle_cls: bool | None = None,
             lang: str,
             use_gpu: bool,
             ocr_version: str | None = None,
@@ -76,7 +76,14 @@ def test_paddle_engine_handles_device_param(monkeypatch):
     captured_kwargs: dict[str, object] = {}
 
     class FakePaddleOCR:
-        def __init__(self, *, use_angle_cls: bool, lang: str, device: str, **kwargs) -> None:
+        def __init__(
+            self,
+            *,
+            use_angle_cls: bool | None = None,
+            lang: str,
+            device: str,
+            **kwargs,
+        ) -> None:
             captured_kwargs.update(
                 {
                     "use_angle_cls": use_angle_cls,
@@ -96,6 +103,7 @@ def test_paddle_engine_handles_device_param(monkeypatch):
 
     assert captured_kwargs["device"] == "gpu"
     assert "use_gpu" not in captured_kwargs
+    assert captured_kwargs.get("use_angle_cls") in {None, False}
 
 
 def test_paddle_engine_drops_unknown_kwargs_and_retries(monkeypatch):
@@ -107,7 +115,7 @@ def test_paddle_engine_drops_unknown_kwargs_and_retries(monkeypatch):
         def __init__(
             self,
             *,
-            use_angle_cls: bool,
+            use_angle_cls: bool | None = None,
             lang: str,
             use_gpu: bool | None = None,
             **kwargs,
@@ -222,7 +230,7 @@ def test_paddle_engine_disables_angle_cls_when_textline_enabled(monkeypatch):
     engine = PaddleOCREngine(OCRConfig(use_textline_orientation=True))
 
     assert captured.get("use_textline_orientation") is True
-    assert captured.get("use_angle_cls") is False
+    assert captured.get("use_angle_cls") in {None, False}
     assert engine.textline_orientation_enabled is True
     assert engine.angle_cls_enabled is False
 
@@ -409,4 +417,4 @@ def test_paddle_engine_applies_detection_overrides(monkeypatch):
     assert captured_kwargs["use_doc_preprocessor"] is False
     assert captured_kwargs["use_doc_orientation_classify"] is False
     assert captured_kwargs["use_doc_unwarping"] is False
-    assert captured_kwargs["use_textline_orientation"] is False
+    assert "use_textline_orientation" not in captured_kwargs
