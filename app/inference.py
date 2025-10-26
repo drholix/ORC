@@ -214,8 +214,8 @@ class PaddleOCREngine:
         self._gpu_retry_done = False
         self._language_failures: set[str] = set()
         self.ocr = self._create_engine_instance()
-        self._refresh_runtime_call_kwargs()
         self.config = config
+        self._refresh_runtime_call_kwargs()
         current_lang = str(self._ocr_kwargs.get("lang", lang))
         self.logger = LOGGER.bind(
             engine="paddle",
@@ -447,13 +447,37 @@ class PaddleOCREngine:
             self._fallback_runtime_kwargs = {}
             return None
         self._fallback_engine = engine
-        self._fallback_runtime_kwargs = self._compute_runtime_kwargs(engine)
+        relaxed_runtime_candidates = {
+            key: relaxed_kwargs.get(key)
+            for key in (
+                "text_det_box_thresh",
+                "det_db_box_thresh",
+                "text_det_thresh",
+                "det_db_thresh",
+                "text_det_unclip_ratio",
+                "det_db_unclip_ratio",
+                "text_det_limit_side_len",
+                "det_limit_side_len",
+                "text_det_limit_type",
+                "det_limit_type",
+                "text_rec_score_thresh",
+                "rec_score_thresh",
+                "use_doc_preprocessor",
+                "use_doc_orientation_classify",
+                "use_doc_unwarping",
+                "use_textline_orientation",
+            )
+        }
+        self._fallback_runtime_kwargs = self._compute_runtime_kwargs(
+            engine, extra_candidates=relaxed_runtime_candidates
+        )
         # ``cls`` can reintroduce the unexpected keyword errors on 3.2, so drop it.
         self._fallback_runtime_kwargs.pop("cls", None)
         return engine
 
-    @staticmethod
-    def _compute_runtime_kwargs(engine: Any) -> Dict[str, Any]:
+    def _compute_runtime_kwargs(
+        self, engine: Any, *, extra_candidates: Dict[str, Any] | None = None
+    ) -> Dict[str, Any]:
         kwargs: Dict[str, Any] = {}
         ocr_method = getattr(engine, "ocr", None)
         if ocr_method is None:
@@ -468,6 +492,17 @@ class PaddleOCREngine:
         )
         if "cls" in signature.parameters or accepts_kwargs:
             kwargs["cls"] = True
+        candidates = self._runtime_parameter_candidates()
+        if extra_candidates:
+            for key, value in extra_candidates.items():
+                if value is None:
+                    continue
+                candidates[key] = value
+        for name, value in candidates.items():
+            if value is None:
+                continue
+            if name in signature.parameters or accepts_kwargs:
+                kwargs[name] = value
         return kwargs
 
     def _create_engine_instance(self):  # type: ignore[no-untyped-def]
@@ -582,22 +617,30 @@ class PaddleOCREngine:
         )
 
     def _refresh_runtime_call_kwargs(self) -> None:
-        """Determine runtime kwargs (like ``cls``) supported by the engine."""
+        """Determine runtime kwargs (like ``cls`` and thresholds) supported by the engine."""
 
-        self._runtime_call_kwargs = {}
-        ocr_method = getattr(self.ocr, "ocr", None)
-        if ocr_method is None:
-            return
-        try:
-            signature = inspect.signature(ocr_method)
-        except (TypeError, ValueError):  # pragma: no cover - signature unavailable
-            return
-        accepts_kwargs = any(
-            parameter.kind is inspect.Parameter.VAR_KEYWORD
-            for parameter in signature.parameters.values()
-        )
-        if "cls" in signature.parameters or accepts_kwargs:
-            self._runtime_call_kwargs["cls"] = True
+        self._runtime_call_kwargs = self._compute_runtime_kwargs(self.ocr)
+
+    def _runtime_parameter_candidates(self) -> Dict[str, Any]:
+        config = self.config
+        return {
+            "text_det_thresh": config.text_det_thresh,
+            "det_db_thresh": config.text_det_thresh,
+            "text_det_box_thresh": config.text_det_box_thresh,
+            "det_db_box_thresh": config.text_det_box_thresh,
+            "text_det_unclip_ratio": config.text_det_unclip_ratio,
+            "det_db_unclip_ratio": config.text_det_unclip_ratio,
+            "text_det_limit_side_len": config.text_det_limit_side_len,
+            "det_limit_side_len": config.text_det_limit_side_len,
+            "text_det_limit_type": config.text_det_limit_type,
+            "det_limit_type": config.text_det_limit_type,
+            "text_rec_score_thresh": config.text_rec_score_thresh,
+            "rec_score_thresh": config.text_rec_score_thresh,
+            "use_doc_preprocessor": config.use_doc_preprocessor,
+            "use_doc_orientation_classify": config.use_doc_orientation_classify,
+            "use_doc_unwarping": config.use_doc_unwarping,
+            "use_textline_orientation": config.use_textline_orientation,
+        }
 
     def _parse_page_entry(self, entry: Any) -> tuple[Any, str, float] | None:
         """Normalise PaddleOCR outputs across versions.

@@ -184,8 +184,11 @@ def test_paddle_engine_runtime_drops_cls_argument(monkeypatch):
     result = engine.infer([[0, 0], [0, 0]], ["en"])
 
     assert result.text == "hello"
-    assert calls[0] == {"cls": True}
-    assert calls[-1] == {}
+    assert len(calls) == 2
+    first_call, second_call = calls
+    assert first_call.get("cls") is True
+    expected_without_cls = {key: value for key, value in first_call.items() if key != "cls"}
+    assert second_call == expected_without_cls
 
 
 def test_paddle_engine_runtime_handles_missing_cls_parameter(monkeypatch):
